@@ -41,6 +41,13 @@ struct ContentView: View {
             .navigationDestination(for: Product.self) { ProductDetailView(product: $0) }
             .searchable(text: $searchText, prompt: "Search products or aisles")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        CalibrationView()
+                    } label: {
+                        Label("Calibrate", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    }
+                }
                 ToolbarItem {
                     Picker("Group", selection: $grouping) {
                         ForEach(Grouping.allCases) { Text($0.rawValue).tag($0) }
