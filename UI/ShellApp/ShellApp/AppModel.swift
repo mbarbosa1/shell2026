@@ -106,12 +106,19 @@ final class AppModel {
         return true
     }
 
-    /// Returns false if no item has that name.
-    func checkOffItem(named name: String, source: ListEvent.Source = .app) -> Bool {
-        guard let item = item(named: name) else { return false }
+    enum CheckOffResult { case checkedOff, alreadyInCart, notOnList }
+
+    /// Puts an item in the cart. An item that's already there is left alone, so saying it twice
+    /// doesn't move it back to "Just added" or log a second check-off.
+    func checkOffItem(named name: String, source: ListEvent.Source = .app) -> CheckOffResult {
+        guard let item = item(named: name) else { return .notOnList }
+        guard !item.isCollected else {
+            confirmation = "\(item.name) is already in your cart"
+            return .alreadyInCart
+        }
         setCollected(item, true, source: source)
         confirmation = "\(item.name) checked off"
-        return true
+        return .checkedOff
     }
 
     /// Changes the fields that are given and leaves the rest. Returns false if no item has that name.

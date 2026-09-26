@@ -159,7 +159,7 @@ final class VoiceAgent {
     /// - `add_usuals`, `get_most_common_items`, `get_last_trip`, `open_camera_or_close`,
     ///   `open_camera`, `close_camera`, `analyze_current_frame`, `cancel_current_operation`: none
     /// - `get_list_history`: `number` (integer, optional; the open list if left out)
-    /// - `finish_list`: `store` (optional), e.g. "Publix"
+    /// - `finish_list` / `finished_list`: `store` (optional), e.g. "Publix"
     private func run(_ tool: String, parameters: [String: Any]) -> (message: String, isError: Bool) {
         let name = Self.text(parameters["name"] ?? parameters["item_name"])
 
@@ -216,9 +216,11 @@ final class VoiceAgent {
 
         case "check_off_item":
             guard let name else { return ("Missing parameter: name.", true) }
-            return model.checkOffItem(named: name, source: .voice)
-                ? ("Checked off \(name).", false)
-                : ("\(name) isn't on the list.", true)
+            switch model.checkOffItem(named: name, source: .voice) {
+            case .checkedOff: return ("Checked off \(name).", false)
+            case .alreadyInCart: return ("\(name) is already in the cart.", false)
+            case .notOnList: return ("\(name) isn't on the list.", true)
+            }
 
         case "add_usuals":
             guard !model.usuals.isEmpty else { return ("There are no usuals yet. Items become usuals after they've been on two lists.", false) }
@@ -236,7 +238,10 @@ final class VoiceAgent {
             guard let list = list(numbered: parameters["number"]) else { return (noSuchList(parameters["number"]), true) }
             return (model.historySummary(of: list), false)
 
-        case "finish_list":
+        case "finish_list", "finished_list":
+            guard !model.items.isEmpty else {
+                return ("List \(model.currentList.number) is empty, so there's no trip to finish. Add items first.", true)
+            }
             let finished = model.finishList(at: Self.text(parameters["store"]), source: .voice)
             return ("Saved list \(finished.number) to History and started list \(model.currentList.number).", false)
 
