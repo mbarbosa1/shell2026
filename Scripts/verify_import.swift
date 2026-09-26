@@ -30,13 +30,13 @@ struct VerifyImport {
         let aisle44 = try context.fetch(FetchDescriptor<StoreLocation>(predicate: #Predicate { $0.block == "G" && $0.aisle == 44 }))
         print("\nIn G44 (\(aisle44.count)):")
         for loc in aisle44.prefix(5) {
-            print("  \(loc.product?.title ?? "?") — \(loc.product?.formattedPrice ?? "")")
+            print("  \(loc.product?.title ?? "?") — \(loc.product?.itemType ?? "")")
         }
 
         print("\nSample:")
         for p in products.filter({ !$0.locations.isEmpty }).prefix(5) {
             let where_ = p.locations.map { "\($0.label) (floor \($0.floor))" }.joined(separator: ", ")
-            print("  [\(p.tcin)] \(p.title) — \(p.formattedPrice ?? "n/a") — \(where_) — raw \(p.rawJSON?.count ?? 0) bytes")
+            print("  [\(p.tcin)] \(p.title) — \(p.formattedPrice ?? "n/a") — \(Int(p.quantityAvailable ?? 0)) in stock — \(where_)")
         }
     }
 }

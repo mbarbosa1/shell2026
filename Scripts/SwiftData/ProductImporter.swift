@@ -34,7 +34,6 @@ enum ProductImporter {
     @discardableResult
     static func importProducts(from data: Data, into context: ModelContext) throws -> Result {
         let file = try JSONDecoder().decode(ProductFileDTO.self, from: data)
-        let rawByTcin = try rawPayloads(in: data)
 
         let existing = try context.fetch(FetchDescriptor<Product>())
         var byTcin = Dictionary(existing.map { ($0.tcin, $0) }, uniquingKeysWith: { first, _ in first })
@@ -59,7 +58,7 @@ enum ProductImporter {
                 byTcin[dto.tcin] = product
                 result.inserted += 1
             }
-            apply(dto, raw: rawByTcin[dto.tcin], to: product, in: context)
+            apply(dto, to: product, in: context)
         }
 
         // Drop anything imported earlier that has no location.
@@ -72,43 +71,20 @@ enum ProductImporter {
         return result
     }
 
-    private static func apply(_ dto: ProductDTO, raw: Data?, to p: Product, in context: ModelContext) {
+    private static func apply(_ dto: ProductDTO, to p: Product, in context: ModelContext) {
         p.title = dto.title ?? dto.tcin
+        p.parentTitle = dto.parentTitle
         p.itemType = dto.itemType
         p.itemTypeId = dto.itemTypeId
-        p.departmentId = dto.departmentId
-        p.classId = dto.classId
-        p.parentTcin = dto.parentTcin
         p.buyURL = dto.buyURL.flatMap(URL.init(string:))
         p.primaryImageURL = dto.primaryImageURL.flatMap(URL.init(string:))
         p.alternateImageURLs = (dto.alternateImageURLs ?? []).compactMap(URL.init(string:))
         p.imageAltText = dto.imageAltText
-
         p.currentPrice = dto.currentPrice
         p.regularPrice = dto.regularPrice
         p.formattedPrice = dto.formattedPrice
-        p.priceType = dto.priceType
-        p.formattedComparisonPrice = dto.formattedComparisonPrice
         p.unitPrice = dto.unitPrice
         p.unitPriceSuffix = dto.unitPriceSuffix
-        p.saveDollar = dto.saveDollar
-        p.savePercent = dto.savePercent
-
-        p.ratingAverage = dto.ratingAverage
-        p.ratingCount = dto.ratingCount
-        p.ratingBreakdown = (dto.ratingBreakdown ?? []).compactMap { r in
-            guard let label = r.label, let value = r.value else { return nil }
-            return RatingScore(label: label, value: value)
-        }
-        p.badges = dto.badges ?? []
-        p.promotions = dto.promotions ?? []
-
-        p.storeId = dto.storeId
-        p.storeName = dto.storeName
-        p.inStoreStatus = dto.inStoreStatus
-        p.pickupStatus = dto.pickupStatus
-        p.shippingStatus = dto.shippingStatus
-        p.deliveryStatus = dto.deliveryStatus
         p.quantityAvailable = dto.quantityAvailable
         p.soldOut = dto.soldOut
 
@@ -117,23 +93,5 @@ enum ProductImporter {
             guard let aisle = loc.aisle, let block = loc.block else { return nil }
             return StoreLocation(aisle: aisle, block: block, floor: loc.floor ?? "01")
         }
-
-        p.searchTerms = dto.searchTerms ?? []
-        p.categories = dto.categories ?? []
-        p.sourceFiles = dto.sourceFiles ?? []
-        p.rawJSON = raw
-        p.updatedAt = .now
-    }
-
-    /// Pulls each product's untyped `raw` payload out as JSON data.
-    private static func rawPayloads(in data: Data) throws -> [String: Data] {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let products = root["products"] as? [[String: Any]] else { return [:] }
-        var out: [String: Data] = [:]
-        for product in products {
-            guard let tcin = product["tcin"] as? String, let raw = product["raw"] else { continue }
-            out[tcin] = try JSONSerialization.data(withJSONObject: raw, options: [.sortedKeys])
-        }
-        return out
     }
 }

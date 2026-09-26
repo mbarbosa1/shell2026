@@ -10,7 +10,7 @@ target.com and loads it into SwiftData.
 
 | File | What it does |
 |---|---|
-| `extract_har.py` | Reads HARs (Python stdlib only), merges every Redsky API response by TCIN, writes `output/products.json`. `--no-raw` drops the raw payload to shrink the file. |
+| `extract_har.py` | Reads HARs (Python stdlib only), merges every Redsky API response by TCIN, writes `output/products.json`. |
 | `SwiftData/Product.swift` | `@Model` `Product` and `StoreLocation` (aisle/block/floor, one-to-many). |
 | `SwiftData/ProductDTO.swift` | Codable mirror of `products.json`. |
 | `SwiftData/ProductImporter.swift` | Upserts `products.json` into a `ModelContext` (re-import updates, never duplicates). |
@@ -18,6 +18,10 @@ target.com and loads it into SwiftData.
 | `verify_decode.swift` | Decodes `products.json` with the DTOs (works with Command Line Tools). |
 
 ## Using it in the app
+
+`ShellApp/ShellApp.xcodeproj` (repo root) already uses these files directly: it compiles
+`SwiftData/*.swift` and bundles `output/products.json`, and re-imports on every launch, so
+running `./run.sh` then rebuilding the app picks up new data. To use them in another project:
 
 1. Drag the three files in `SwiftData/` and `output/products.json` into your Xcode target.
 2. Register the models and seed on launch:
@@ -49,10 +53,19 @@ product.locations                     // every spot the item is stocked
 
 ## What gets stored per product
 
-Title, item type, department/class IDs, product URL, images (+ alt text), current/regular/unit
-price, savings, rating average/count/breakdown, badges, promotions, store availability
-(in-store, pickup, shipping, delivery, quantity), **store locations**, the search terms and
-categories it appeared under, and `rawJSON`: the full merged API payload so nothing is lost.
+| Field | Example |
+|---|---|
+| `tcin` | `13276204` |
+| `title` | 2% Reduced Fat Milk - 1gal - Good & Gather™ |
+| `parentTitle` | Milk - Good & Gather™ (only for variations, otherwise empty) |
+| `itemType` / `itemTypeId` | Milk and Buttermilk / `434372` |
+| `buyURL` | target.com product page |
+| `primaryImageURL`, `alternateImageURLs` | Target image CDN links |
+| `imageAltText` | description of the primary image |
+| `formattedPrice`, `currentPrice`, `regularPrice` | `$2.99`, `2.99`, `2.99` (regular > current means on sale) |
+| `unitPrice`, `unitPriceSuffix` | `$0.02`, `/fluid ounce` |
+| `quantityAvailable`, `soldOut` | stock at the captured store |
+| `locations` → `StoreLocation` | block `G`, aisle `44`, floor `01` (each spot once) |
 
 Notes:
 - Location and stock data are for the store the HAR was captured against (store 1074, Aventura).

@@ -6,41 +6,25 @@ import SwiftData
 final class Product {
     @Attribute(.unique) var tcin: String
     var title: String
+    /// Title of the variation group, e.g. "Milk - Good & Gather™" for the 2% gallon.
+    var parentTitle: String?
     var itemType: String?
     var itemTypeId: String?
-    var departmentId: Int?
-    var classId: Int?
-    var parentTcin: String?
+
     var buyURL: URL?
     var primaryImageURL: URL?
     var alternateImageURLs: [URL]
     var imageAltText: String?
 
-    // Pricing
+    /// Price at the store the HAR was captured against. `formattedPrice` is Target's
+    /// display string, which can be a range ("$1.19 - $3.99") for variation groups.
     var currentPrice: Double?
     var regularPrice: Double?
     var formattedPrice: String?
-    var priceType: String?
-    var formattedComparisonPrice: String?
     var unitPrice: String?
     var unitPriceSuffix: String?
-    var saveDollar: Double?
-    var savePercent: Double?
 
-    // Ratings and merchandising
-    var ratingAverage: Double?
-    var ratingCount: Int?
-    var ratingBreakdown: [RatingScore]
-    var badges: [String]
-    var promotions: [String]
-
-    // Store availability (store the HAR was captured against)
-    var storeId: String?
-    var storeName: String?
-    var inStoreStatus: String?
-    var pickupStatus: String?
-    var shippingStatus: String?
-    var deliveryStatus: String?
+    /// Stock at the store the HAR was captured against.
     var quantityAvailable: Double?
     var soldOut: Bool?
 
@@ -48,26 +32,15 @@ final class Product {
     @Relationship(deleteRule: .cascade, inverse: \StoreLocation.product)
     var locations: [StoreLocation] = []
 
-    var searchTerms: [String]
-    var categories: [String]
-    var sourceFiles: [String]
-
-    /// The full merged API payload, so no field from the HAR is lost.
-    @Attribute(.externalStorage) var rawJSON: Data?
-
-    var updatedAt: Date
-
     init(tcin: String, title: String) {
         self.tcin = tcin
         self.title = title
         self.alternateImageURLs = []
-        self.ratingBreakdown = []
-        self.badges = []
-        self.promotions = []
-        self.searchTerms = []
-        self.categories = []
-        self.sourceFiles = []
-        self.updatedAt = .now
+    }
+
+    var isOnSale: Bool {
+        guard let currentPrice, let regularPrice else { return false }
+        return currentPrice < regularPrice
     }
 
     /// Primary location as shown in the Target app, e.g. "G44".
@@ -91,9 +64,4 @@ final class StoreLocation {
     }
 
     var label: String { "\(block)\(aisle)" }
-}
-
-struct RatingScore: Codable, Hashable {
-    var label: String
-    var value: Double
 }

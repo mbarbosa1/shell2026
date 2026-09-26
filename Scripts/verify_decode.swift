@@ -13,7 +13,7 @@ struct VerifyDecode {
         print("Decoded \(file.products.count) products (\(located.count) with aisle/block)")
         for p in located.prefix(5) {
             let where_ = (p.locations ?? []).map { "\($0.block ?? "?")\($0.aisle ?? 0)" }.joined(separator: ", ")
-            print("  [\(p.tcin)] \(p.title ?? "?") — \(p.formattedPrice ?? "n/a") — \(where_)")
+            print("  [\(p.tcin)] \(p.title ?? "?") — \(p.formattedPrice ?? "n/a") — \(Int(p.quantityAvailable ?? 0)) in stock — \(where_)")
         }
     }
 }
