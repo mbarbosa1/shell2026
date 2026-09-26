@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SwiftData
+import UIKit
 
 /// UI state for the screens, backed by the grocery database (`GroceryDatabase`).
 /// The screens and the voice agent (`VoiceAgent`) change the list through the methods below,
@@ -82,7 +83,17 @@ final class AppModel {
     // MARK: Voice agent
 
     func setListening(_ isListening: Bool) async {
+        // VoiceOver already reads the screen aloud. The agent talking too would make both unusable.
+        if isListening && UIAccessibility.isVoiceOverRunning { return }
         await voice?.setListening(isListening)
+    }
+
+    /// Called when VoiceOver is turned on or off. Turning it on hangs up the agent;
+    /// turning it off leaves the agent off until the user starts it again.
+    func voiceOverChanged() async {
+        if UIAccessibility.isVoiceOverRunning {
+            await voice?.stop()
+        }
     }
 
     //as the voice agent hears items to add, we need to add them to the databse

@@ -20,6 +20,10 @@ struct ShellAppApp: App {
             RootView()
                 .environment(model)
                 .preferredColorScheme(.dark)
+                 // iOS posts this whenever VoiceOver is switched on or off.
+                .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+                    Task { await model.voiceOverChanged() }
+                }
         }
         .modelContainer(container)
     }
