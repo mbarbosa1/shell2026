@@ -123,6 +123,10 @@ final class VoiceAgent {
     private func handle(_ call: ClientToolCallEvent) async {
         let parameters = (try? call.getParameters()) ?? [:]
         let result = run(call.toolName, parameters: parameters)
+        #if DEBUG
+        print("🛒 \(call.toolName) \(parameters) → \(result.isError ? "ERROR: " : "")\(result.message)")
+        print(model.databaseSnapshot)
+        #endif
 
         guard call.expectsResponse else {
             conversation?.markToolCallCompleted(call.toolCallId)
@@ -135,40 +139,116 @@ final class VoiceAgent {
         }
     }
 
-    /// Runs one tool and returns the text the agent reads back.
+    /// Runs one tool and returns the text the agent reads back. Every change is saved to the
+    /// grocery database and logged in the list's history as coming from voice.
+    ///
+    /// Tools answer to the dashboard's names (`add_grocery_item`) and the short ones (`add_item`).
+    /// Parameters (all strings unless noted; the item's name can be `name` or `item_name`):
+    /// - `get_grocery_list` / `get_list`: `number` (integer, optional; the open list if left out)
+    /// - `add_grocery_item` / `add_item`: `name`, and optional `brand`, `label`, `size`,
+    ///   `quantity` (integer), `aisle` (integer), `block` (e.g. "G")
+    /// - `update_grocery_item`: `name`, and any of `quantity`, `brand`, `label`, `size`, `aisle`,
+    ///   `block`, `in_cart` (boolean)
+    /// - `set_item_location`: `name`, `aisle` (integer), `block`
+    /// - `remove_grocery_item` / `remove_item`, `check_off_item`: `name`
+    /// - `add_usuals`, `get_most_common_items`, `get_last_trip`, `open_camera_or_close`,
+    ///   `open_camera`, `close_camera`, `analyze_current_frame`, `cancel_current_operation`: none
+    /// - `get_list_history`: `number` (integer, optional; the open list if left out)
+    /// - `finish_list`: `store` (optional), e.g. "Publix"
     private func run(_ tool: String, parameters: [String: Any]) -> (message: String, isError: Bool) {
-        let name = parameters["name"] as? String
+        let name = (parameters["name"] ?? parameters["item_name"]) as? String
 
         switch tool {
-        case "get_list":
-            return (model.listSummary, false)
+        case "get_grocery_list", "get_list":
+            guard let list = list(numbered: parameters["number"]) else { return (noSuchList(parameters["number"]), true) }
+            return (model.summary(of: list), false)
 
-        case "add_item":
+        case "add_grocery_item", "add_item":
             guard let name else { return ("Missing parameter: name.", true) }
             model.addItem(GroceryItem(
                 name: name,
                 brand: parameters["brand"] as? String,
                 label: parameters["label"] as? String,
                 size: parameters["size"] as? String,
-                quantity: parameters["quantity"] as? Int ?? 1
-            ))
-            return ("Added \(name) to the list.", false)
+                quantity: Self.int(parameters["quantity"]) ?? 1,
+                aisle: Self.int(parameters["aisle"]),
+                block: (parameters["block"] as? String)?.uppercased()
+            ), source: .voice)
+            return ("Added \(name) to list \(model.currentList.number).", false)
 
-        case "remove_item":
+        case "update_grocery_item", "update_item":
             guard let name else { return ("Missing parameter: name.", true) }
-            return model.removeItem(named: name)
+            let quantity = Self.int(parameters["quantity"])
+            let aisle = Self.int(parameters["aisle"])
+            let block = Self.text(parameters["block"])
+            let isCollected = Self.bool(parameters["in_cart"])
+            let brand = Self.text(parameters["brand"]), label = Self.text(parameters["label"]), size = Self.text(parameters["size"])
+            let changes: [Any?] = [quantity, aisle, isCollected, block, brand, label, size]
+            guard changes.contains(where: { $0 != nil }) else {
+                return ("Nothing to update. Give a quantity, brand, label, size, aisle, block, or in_cart.", true)
+            }
+            return model.updateItem(
+                named: name, quantity: quantity, brand: brand, label: label, size: size,
+                aisle: aisle, block: block, isCollected: isCollected, source: .voice
+            )
+                ? ("Updated \(name). \(model.listSummary)", false)
+                : ("\(name) isn't on the list.", true)
+
+        case "set_item_location":
+            guard let name else { return ("Missing parameter: name.", true) }
+            guard let aisle = Self.int(parameters["aisle"]), let block = Self.text(parameters["block"]) else {
+                return ("Missing parameter: aisle and block are both needed.", true)
+            }
+            return model.updateItem(named: name, aisle: aisle, block: block, source: .voice)
+                ? ("\(name) is in block \(block.uppercased()), aisle \(aisle).", false)
+                : ("\(name) isn't on the list.", true)
+
+        case "remove_grocery_item", "remove_item":
+            guard let name else { return ("Missing parameter: name.", true) }
+            return model.removeItem(named: name, source: .voice)
                 ? ("Removed \(name) from the list.", false)
                 : ("\(name) isn't on the list.", true)
 
         case "check_off_item":
             guard let name else { return ("Missing parameter: name.", true) }
-            return model.checkOffItem(named: name)
+            return model.checkOffItem(named: name, source: .voice)
                 ? ("Checked off \(name).", false)
                 : ("\(name) isn't on the list.", true)
 
         case "add_usuals":
-            model.addUsualsToList()
+            guard !model.usuals.isEmpty else { return ("There are no usuals yet. Items become usuals after they've been on two lists.", false) }
+            model.addUsualsToList(source: .voice)
             return ("Added the usuals. \(model.listSummary)", false)
+
+        case "get_most_common_items":
+            return (model.mostCommonSummary, false)
+
+        case "get_last_trip":
+            guard let trip = model.trips.first else { return ("There are no finished trips yet.", false) }
+            return (model.summary(of: trip), false)
+
+        case "get_list_history":
+            guard let list = list(numbered: parameters["number"]) else { return (noSuchList(parameters["number"]), true) }
+            return (model.historySummary(of: list), false)
+
+        case "finish_list":
+            let finished = model.finishList(at: parameters["store"] as? String, source: .voice)
+            return ("Saved list \(finished.number) to History and started list \(model.currentList.number).", false)
+
+        case "open_camera_or_close":
+            model.isCameraOpen.toggle()
+            return (model.isCameraOpen ? "Camera opened." : "Camera closed.", false)
+
+        case "analyze_current_frame":
+            // No computer vision in the app yet, so say so instead of guessing a direction.
+            return model.isCameraOpen
+                ? ("Frame analysis isn't connected yet, so I can't tell which way to turn.", true)
+                : ("The camera is closed. Open it first.", true)
+
+        case "cancel_current_operation":
+            let wasOpen = model.isCameraOpen
+            model.isCameraOpen = false
+            return (wasOpen ? "Cancelled and closed the camera." : "Cancelled. Nothing was running.", false)
 
         case "open_camera":
             model.isCameraOpen = true
@@ -180,6 +260,41 @@ final class VoiceAgent {
 
         default:
             return ("Unknown tool: \(tool).", true)
+        }
+    }
+
+    /// The list with that number, or the open list if there's no number.
+    private func list(numbered value: Any?) -> GroceryList? {
+        guard let number = Self.int(value) else { return model.currentList }
+        return model.list(number: number)
+    }
+
+    private func noSuchList(_ value: Any?) -> String {
+        "There's no list \(Self.int(value).map(String.init) ?? "with that number")."
+    }
+
+    /// Non-empty text, or nil.
+    private static func text(_ value: Any?) -> String? {
+        guard let text = (value as? String)?.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return nil }
+        return text
+    }
+
+    /// The agent may send true/false or text like "yes".
+    private static func bool(_ value: Any?) -> Bool? {
+        switch value {
+        case let flag as Bool: return flag
+        case let text as String: return ["true", "yes", "1"].contains(text.lowercased()) ? true : ["false", "no", "0"].contains(text.lowercased()) ? false : nil
+        default: return nil
+        }
+    }
+
+    /// The agent may send numbers as integers, decimals, or text.
+    private static func int(_ value: Any?) -> Int? {
+        switch value {
+        case let number as Int: return number
+        case let number as Double: return Int(number)
+        case let text as String: return Int(text.trimmingCharacters(in: .whitespaces))
+        default: return nil
         }
     }
 }

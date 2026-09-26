@@ -70,6 +70,6 @@ struct ShellTabBar: View {
 
 #Preview {
     RootView()
-        .environment(AppModel())
+        .environment(AppModel.preview)
         .preferredColorScheme(.dark)
 }
