@@ -46,6 +46,9 @@ final class CloudAssistTests: XCTestCase {
             classifications: scores.map { VisualClassification(identifier: $0.key, score: $0.value) })
     }
 
+    /// Just above the Apple Vision produce threshold, whatever it is tuned to.
+    private var passing: Float { VisualRecognitionPolicy.appleVisionProduce.minimumScore + 0.01 }
+
     func testBackgroundDoesNotCompeteWithAnySelectedProduce() throws {
         for label in ["onion", "apple", "orange", "banana", "grape", "avocado"] {
             let match = try VisualCatalogMatcher().match(
@@ -64,6 +67,63 @@ final class CloudAssistTests: XCTestCase {
                 targetID: target, against: [mvpItem(target, label)], policy: .appleVisionProduce)
             XCTAssertEqual(low.reason, .insufficientEvidence, "\(label) below threshold")
         }
+    }
+
+    func testMatchConfidenceIsRelativeToOtherProduceAndZeroForUnrelatedItems() throws {
+        let matcher = VisualCatalogMatcher()
+        let policy = VisualRecognitionPolicy(minimumScore: 0.3, minimumMargin: 0.1)
+        func confidence(_ scores: [String: Float], kind: VisualObservation.Kind = .modelScores) throws -> Float {
+            var observation = mvpObservation(scores)
+            if kind == .cloudSuggestion {
+                observation = VisualObservation(timestamp: 1, modelID: ProduceCategoryClassifier.modelID, modelVersion: "v",
+                    inputRegion: observation.inputRegion, classifications: observation.classifications, kind: kind)
+            }
+            return try matcher.match(observation, targetID: target, against: [mvpItem(target, "onion")],
+                                     policy: policy).confidence
+        }
+        // The iPhone frame: table in the background does not lower the value.
+        XCTAssertEqual(try confidence(["onion": 0.31, "unknown": 0.73, "potato": 0.04]), 0.886, accuracy: 0.001)
+        // Cereal box: onion absent or at noise level.
+        XCTAssertEqual(try confidence(["unknown": 0.9]), 0)
+        XCTAssertEqual(try confidence(["onion": 0.04, "unknown": 0.9]), 0)
+        // Lookalike close behind: clearly unsure, but not zero.
+        XCTAssertEqual(try confidence(["onion": 0.35, "potato": 0.30]), 0.538, accuracy: 0.001)
+        // Weak but unopposed onion: partial strength.
+        XCTAssertEqual(try confidence(["onion": 0.15]), 0.5, accuracy: 0.001)
+        // Gemini answers carry their own confidence; a different label is 0.
+        XCTAssertEqual(try confidence(["onion": 0.9], kind: .cloudSuggestion), 0.9, accuracy: 0.001)
+        XCTAssertEqual(try confidence(["potato": 0.9], kind: .cloudSuggestion), 0)
+    }
+
+    func testSmootherAveragesRecentFramesAndRestartsAfterGap() {
+        var smoother = MatchConfidenceSmoother(window: 3, maximumGap: 2)
+        XCTAssertEqual(smoother.add(0.9, at: 1), 0.9, accuracy: 0.001)
+        XCTAssertEqual(smoother.add(0.9, at: 1.2), 0.9, accuracy: 0.001)
+        XCTAssertEqual(smoother.add(0, at: 1.4), 0.6, accuracy: 0.001, "cereal box appears: decays, no jump")
+        XCTAssertEqual(smoother.add(0, at: 1.6), 0.3, accuracy: 0.001)
+        XCTAssertEqual(smoother.add(0, at: 1.8), 0, accuracy: 0.001)
+        XCTAssertEqual(smoother.add(0.6, at: 5), 0.6, accuracy: 0.001, "gap over 2 s starts over")
+        smoother.reset()
+        XCTAssertEqual(smoother.add(1, at: 6), 1, accuracy: 0.001)
+    }
+
+    func testCoordinatorReportsSmoothedMatchConfidenceAlongsideStatus() async throws {
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: passing,
+            extra: [.init(identifier: "table", score: 0.73), .init(identifier: "potato", score: 0.04)]))
+        let session = try await RecognitionCoordinator(targetID: target,
+            catalog: SingleItemCatalog(item: mvpItem(target, "onion")), visualClassifier: classifier,
+            visualPolicy: .appleVisionProduce)
+        let context = RecognitionContext(targetItemID: target, landmarkProgress: LandmarkProgressObservation(
+            timestamp: 0, passedLandmarkID: "home-test", metersPastLandmark: 5, isReliable: true), externalPause: false)
+        var results: [ItemRecognitionResult] = []
+        for frame in 1...15 {
+            if let result = try await session.submit(context, image: image(Double(frame) / 10)).result { results.append(result) }
+        }
+        let expected = passing / (passing + 0.04) // full strength, share against potato
+        XCTAssertEqual(results.last?.status, .confirmed)
+        XCTAssertEqual(results.last?.matchConfidence ?? 0, expected, accuracy: 0.001)
+        XCTAssertEqual(results.first?.matchConfidence ?? 0, expected, accuracy: 0.001, "constant input: no ramp needed")
+        XCTAssertNotEqual(results.last?.matchConfidence, results.last?.score, "confidence is not the raw label score")
     }
 
     func testUnknownStillCompetesForNonTaxonomyModels() throws {

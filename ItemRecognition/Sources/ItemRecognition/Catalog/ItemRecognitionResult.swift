@@ -10,19 +10,27 @@ public struct ItemRecognitionResult: Sendable, Equatable {
     public let targetItemID: UUID
     public let matchedItemID: UUID?
     public let normalizedObservedText: Set<String>
+    /// Raw evidence score for the selected product in this frame.
     public let score: Float
     public let status: Status
+    /// How closely the recent frames match the selected product, 0...1, averaged
+    /// over the last few processed frames. 1 means the selected label clearly
+    /// dominates; 0 means it is absent (a cereal box while looking for onion).
+    /// Independent of `status`; not a calibrated probability.
+    public let matchConfidence: Float
     public let evidenceSource: RecognitionEvidenceSource
     public let visualEvidence: VisualObservation?
     public let visualMatchReason: VisualCatalogMatch.Reason?
 
     public init(timestamp: TimeInterval, targetItemID: UUID, matchedItemID: UUID?,
                 normalizedObservedText: Set<String>, score: Float, status: Status,
+                matchConfidence: Float = 0,
                 evidenceSource: RecognitionEvidenceSource = .ocr,
                 visualEvidence: VisualObservation? = nil,
                 visualMatchReason: VisualCatalogMatch.Reason? = nil) {
         self.timestamp = timestamp; self.targetItemID = targetItemID; self.matchedItemID = matchedItemID
         self.normalizedObservedText = normalizedObservedText; self.score = score; self.status = status
+        self.matchConfidence = matchConfidence
         self.evidenceSource = evidenceSource; self.visualEvidence = visualEvidence
         self.visualMatchReason = visualMatchReason
     }
@@ -75,5 +83,28 @@ public struct TemporalConfirmation: Sendable {
         guard accepted else { count = 0; return false }
         count += 1
         return count >= requiredObservations
+    }
+}
+
+/// Mean of the last `window` per-frame confidences so the value does not flicker
+/// frame to frame. A gap longer than `maximumGap` starts over.
+public struct MatchConfidenceSmoother: Sendable {
+    public let window: Int
+    public let maximumGap: TimeInterval
+    private var samples: [Float] = []
+    private var previousTimestamp: TimeInterval?
+
+    public init(window: Int = 3, maximumGap: TimeInterval = 2) {
+        self.window = max(1, window)
+        self.maximumGap = maximumGap.isFinite ? max(0, maximumGap) : 2
+    }
+    public mutating func reset() { samples.removeAll(); previousTimestamp = nil }
+    public mutating func add(_ confidence: Float, at timestamp: TimeInterval) -> Float {
+        guard timestamp.isFinite, confidence.isFinite else { reset(); return 0 }
+        if let previousTimestamp, timestamp - previousTimestamp > maximumGap { samples.removeAll() }
+        previousTimestamp = timestamp
+        samples.append(min(max(confidence, 0), 1))
+        if samples.count > window { samples.removeFirst(samples.count - window) }
+        return samples.reduce(0, +) / Float(samples.count)
     }
 }

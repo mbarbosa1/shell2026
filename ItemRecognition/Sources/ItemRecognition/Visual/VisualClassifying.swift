@@ -67,18 +67,23 @@ public struct VisualRecognitionPolicy: Sendable {
     public let minimumMargin: Float
     public let requiredObservations: Int
     public let maximumGap: TimeInterval
+    /// Target scores below this are noise: match confidence reports 0 (a cereal
+    /// box that gets "onion" at 4% is not "a little bit onion").
+    public let noiseFloor: Float
     public init(minimumScore: Float = 0.8, minimumMargin: Float = 0.2,
-                requiredObservations: Int = 3, maximumGap: TimeInterval = 2) {
+                requiredObservations: Int = 3, maximumGap: TimeInterval = 2,
+                noiseFloor: Float = 0.1) {
         self.minimumScore = minimumScore.isFinite ? min(max(minimumScore, 0), 1) : 0.8
         self.minimumMargin = minimumMargin.isFinite ? min(max(minimumMargin, 0), 1) : 0.2
         self.requiredObservations = max(1, requiredObservations)
         self.maximumGap = maximumGap.isFinite ? max(0, maximumGap) : 2
+        self.noiseFloor = noiseFloor.isFinite ? min(max(noiseFloor, 0), 1) : 0.1
     }
 
     /// Apple Vision behind the MVP taxonomy. It scores ~1,300 labels independently
     /// and rarely rates a specific produce label highly, so the selected item needs
-    /// 30% and a 10-point lead over other produce labels (background excluded).
-    /// Provisional: re-tune from device results for each item and lookalike.
+    /// `minimumScore` and a 10-point lead over other produce labels (background
+    /// excluded). Provisional: re-tune from device results for each item and lookalike.
     public static let appleVisionProduce = VisualRecognitionPolicy(minimumScore: 0.3, minimumMargin: 0.1)
 }
 

@@ -12,7 +12,26 @@ public struct VisualCatalogMatch: Sendable, Equatable {
     public let score: Float
     public let classID: String?
     public let reason: Reason
+    /// How closely this one frame matches the selected product, 0...1. Relative
+    /// to competing labels (background excluded for the MVP taxonomy) and scaled
+    /// so reaching `minimumScore` alone counts as full strength. 0 below the
+    /// noise floor. Not a calibrated probability.
+    public let confidence: Float
     public var accepted: Bool { reason == .accepted || reason == .acceptedCategory }
+
+    public init(score: Float, classID: String?, reason: Reason, confidence: Float = 0) {
+        self.score = score; self.classID = classID; self.reason = reason; self.confidence = confidence
+    }
+
+    static func confidence(target: Float, competing: Float, kind: VisualObservation.Kind,
+                           policy: VisualRecognitionPolicy) -> Float {
+        guard target > 0, target >= policy.noiseFloor else { return 0 }
+        // A cloud answer is one label with the provider's own confidence.
+        if kind == .cloudSuggestion { return min(target, 1) }
+        let share = target / (target + competing)
+        let strength = policy.minimumScore > 0 ? min(target / policy.minimumScore, 1) : 1
+        return min(max(share * strength, 0), 1)
+    }
 }
 
 public struct VisualCatalogMatcher: Sendable {
@@ -43,28 +62,26 @@ public struct VisualCatalogMatcher: Sendable {
             !(metadata.modelID == ProduceCategoryClassifier.modelID && $0.identifier == "unknown")
         }
         let otherScore = competing.map(\.score).max() ?? 0
-        guard score > 0, score >= policy.minimumScore else {
-            return VisualCatalogMatch(score: score, classID: classID, reason: .insufficientEvidence)
+        let confidence = VisualCatalogMatch.confidence(target: score, competing: competing.map(\.score).reduce(0, +),
+                                                       kind: observation.kind, policy: policy)
+        func match(_ reason: VisualCatalogMatch.Reason) -> VisualCatalogMatch {
+            VisualCatalogMatch(score: score, classID: classID, reason: reason, confidence: confidence)
         }
-        guard score - otherScore >= policy.minimumMargin else {
-            return VisualCatalogMatch(score: score, classID: classID, reason: .insufficientEvidence)
-        }
+        guard score > 0, score >= policy.minimumScore else { return match(.insufficientEvidence) }
+        guard score - otherScore >= policy.minimumMargin else { return match(.insufficientEvidence) }
         // Raw Vision labels are an unreviewed vocabulary; only the MVP taxonomy
         // or a validated custom model may confirm.
         guard metadata.allowsConfirmation, metadata.modelID != VisionImageClassifier.modelID else {
-            return VisualCatalogMatch(score: score, classID: classID, reason: .categoryOnly)
+            return match(.categoryOnly)
         }
         // Neighbors sharing "apple" are expected at category level; the selected
         // target is confirmed as that category, not as a verified variety.
-        if metadata.modelID == ProduceCategoryClassifier.modelID {
-            return VisualCatalogMatch(score: score, classID: classID, reason: .acceptedCategory)
-        }
+        if metadata.modelID == ProduceCategoryClassifier.modelID { return match(.acceptedCategory) }
         let ambiguous = candidates.contains { candidate in
             guard candidate.id != targetID, let other = candidate.visual,
                   other.modelID == metadata.modelID else { return false }
             return !other.classIDs.isDisjoint(with: metadata.classIDs)
         }
-        return VisualCatalogMatch(score: score, classID: classID,
-                                  reason: ambiguous ? .ambiguousCatalog : .accepted)
+        return match(ambiguous ? .ambiguousCatalog : .accepted)
     }
 }

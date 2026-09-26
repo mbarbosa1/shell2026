@@ -9,7 +9,7 @@ public struct RecognitionUpdate: Sendable {
     public let side: ShelfSide?
     public var confirmedObservation: ItemObservation? {
         guard let result, result.status == .confirmed, let itemID = result.matchedItemID else { return nil }
-        return ItemObservation(timestamp: result.timestamp, itemID: itemID, matchConfidence: result.score,
+        return ItemObservation(timestamp: result.timestamp, itemID: itemID, matchConfidence: result.matchConfidence,
                                observedTerms: result.normalizedObservedText, side: side ?? observation?.side,
                                evidenceSource: result.evidenceSource, visualEvidence: result.visualEvidence)
     }
@@ -33,6 +33,7 @@ public actor RecognitionCoordinator {
     private let visualModel: VisualModelInfo?
     private var visualModelVersion: String?
     private var confirmation: TemporalConfirmation
+    private var smoother: MatchConfidenceSmoother
     private var generation: UInt = 0
     private var busy = false
     private var stopped = false
@@ -57,9 +58,11 @@ public actor RecognitionCoordinator {
             }
             visualModel = info
             confirmation = TemporalConfirmation(requiredObservations: visualPolicy.requiredObservations, maximumGap: visualPolicy.maximumGap)
+            smoother = MatchConfidenceSmoother(window: visualPolicy.requiredObservations, maximumGap: visualPolicy.maximumGap)
         } else {
             visualModel = nil
             confirmation = TemporalConfirmation(requiredObservations: policy.requiredObservations, maximumGap: policy.maximumGap)
+            smoother = MatchConfidenceSmoother(window: policy.requiredObservations, maximumGap: policy.maximumGap)
         }
         let gate = ActivationGate(catalog: catalog)
         self.gate = gate
@@ -73,16 +76,18 @@ public actor RecognitionCoordinator {
         guard context.targetItemID == targetID else { throw RecognitionSessionError.wrongTarget }
         let decision = try await gate.evaluate(context)
         if decision.clearTemporalCandidates {
-            generation &+= 1; confirmation.reset()
+            generation &+= 1; resetEvidence()
             await extraction.invalidate()
         }
         return decision
     }
 
     public func stop() async {
-        stopped = true; generation &+= 1; confirmation.reset()
+        stopped = true; generation &+= 1; resetEvidence()
         await extraction.invalidate()
     }
+
+    private func resetEvidence() { confirmation.reset(); smoother.reset() }
 
     public func submit(_ context: RecognitionContext, image: RecognitionImage, crop: CGRect? = nil) async throws -> RecognitionUpdate {
         guard !stopped else { throw RecognitionSessionError.stopped }
@@ -97,7 +102,7 @@ public actor RecognitionCoordinator {
         let revision = generation
         let outcome: RecognitionFrameOutcome
         do { outcome = try await extraction.submit(context, image: image, crop: crop) }
-        catch { confirmation.reset(); throw error }
+        catch { resetEvidence(); throw error }
         let currentState = await gate.currentState
         guard currentState == .active, revision == generation, !stopped else {
             return RecognitionUpdate(gate: await gate.lastDecision ?? decision, observation: nil, result: nil)
@@ -113,11 +118,12 @@ public actor RecognitionCoordinator {
             do {
                 return try matchVisual(visual, image: image, expectedRegion: crop ?? CGRect(origin: .zero, size: image.imageResolution),
                                        decision: decision, side: side)
-            } catch { confirmation.reset(); throw error }
+            } catch { resetEvidence(); throw error }
         }
         guard case .text(let observation) = evidence, let observation else {
             _ = confirmation.observe(targetID: targetID, timestamp: image.timestamp, accepted: false)
-            return RecognitionUpdate(gate: decision, observation: nil, result: result(image, status: .noMatch))
+            let confidence = smoother.add(0, at: image.timestamp)
+            return RecognitionUpdate(gate: decision, observation: nil, result: result(image, status: .noMatch, matchConfidence: confidence))
         }
         let matches = matcher.match(observation, against: candidates)
         let target = matches.first { $0.itemID == targetID }
@@ -126,15 +132,21 @@ public actor RecognitionCoordinator {
         let accepted = score > 0 && score >= policy.minimumScore && score - runnerUp >= policy.minimumMargin && target?.conflicts.isEmpty == true
         let confirmed = confirmation.observe(targetID: targetID, timestamp: image.timestamp, accepted: accepted)
         let status: ItemRecognitionResult.Status = confirmed ? .confirmed : (score > 0 ? .candidate : .noMatch)
+        // OCR: the target's share of catalog text evidence, scaled to the policy threshold.
+        let strength = policy.minimumScore > 0 ? min(score / policy.minimumScore, 1) : 1
+        let frameConfidence = score > 0 ? score / (score + runnerUp) * strength : 0
+        let confidence = smoother.add(frameConfidence, at: image.timestamp)
         let terms = Set(observation.candidates.flatMap { TextNormalizer().tokens(from: $0.normalizedText) })
         return RecognitionUpdate(gate: decision, observation: observation,
             result: ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID,
-                matchedItemID: confirmed ? targetID : nil, normalizedObservedText: terms, score: score, status: status))
+                matchedItemID: confirmed ? targetID : nil, normalizedObservedText: terms, score: score, status: status,
+                matchConfidence: confidence))
     }
 
-    private func result(_ image: RecognitionImage, status: ItemRecognitionResult.Status) -> ItemRecognitionResult {
+    private func result(_ image: RecognitionImage, status: ItemRecognitionResult.Status,
+                        matchConfidence: Float = 0) -> ItemRecognitionResult {
         ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID, matchedItemID: nil,
-                              normalizedObservedText: [], score: 0, status: status,
+                              normalizedObservedText: [], score: 0, status: status, matchConfidence: matchConfidence,
                               evidenceSource: visualModel == nil ? .ocr : .visual)
     }
 
@@ -148,18 +160,20 @@ public actor RecognitionCoordinator {
         }
         try VisionRegionOfInterest.validate(pixelCrop: observation.inputRegion, imageSize: image.imageResolution)
         if visualModelVersion != observation.modelVersion {
-            confirmation.reset()
+            resetEvidence()
             visualModelVersion = observation.modelVersion
         }
         let match = try VisualCatalogMatcher().match(observation, targetID: targetID,
                                                     against: candidates, policy: visualPolicy)
         let confirmed = confirmation.observe(targetID: targetID, timestamp: image.timestamp, accepted: match.accepted)
+        let confidence = smoother.add(match.confidence, at: image.timestamp)
         let status: ItemRecognitionResult.Status = confirmed ? .confirmed :
             (match.score >= visualPolicy.minimumScore && match.score > 0 ? .candidate : .noMatch)
         return RecognitionUpdate(gate: decision, observation: nil,
             result: ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID,
                 matchedItemID: confirmed ? targetID : nil, normalizedObservedText: [], score: match.score,
-                status: status, evidenceSource: .visual, visualEvidence: observation, visualMatchReason: match.reason),
+                status: status, matchConfidence: confidence, evidenceSource: .visual, visualEvidence: observation,
+                visualMatchReason: match.reason),
             side: side)
     }
 }
