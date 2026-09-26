@@ -31,6 +31,8 @@ final class VoiceAgent {
             return
         }
         model.voiceError = nil
+        // A new conversation starts fresh, so words from the last one can't close a list.
+        model.transcript = nil
 
         // Ask here rather than leaving it to the SDK, which only asks after it has a token,
         // so a token failure would otherwise hide the prompt.
@@ -242,6 +244,11 @@ final class VoiceAgent {
             guard !model.items.isEmpty else {
                 return ("List \(model.currentList.number) is empty, so there's no trip to finish. Add items first.", true)
             }
+            // Only the user can close a list: check what they actually said, not the agent's guess.
+            guard Self.saidFinished(model.transcript) else {
+                return ("Not finished: the user didn't say they're done. Keep list \(model.currentList.number) open. "
+                    + "Only call this after they say something like \"I'm done shopping\" or \"close my list\".", true)
+            }
             let finished = model.finishList(at: Self.text(parameters["store"]), source: .voice)
             return ("Saved list \(finished.number) to History and started list \(model.currentList.number).", false)
 
@@ -281,6 +288,24 @@ final class VoiceAgent {
 
     private func noSuchList(_ value: Any?) -> String {
         "There's no list \(Self.int(value).map(String.init) ?? "with that number")."
+    }
+
+    /// True if the user's own words clearly say they're done, e.g. "I'm done shopping" or
+    /// "close my list". "I'm not done yet" and anything without a finish phrase don't count.
+    private static func saidFinished(_ transcript: String?) -> Bool {
+        guard let transcript else { return false }
+        let said = transcript.lowercased().replacingOccurrences(of: "’", with: "'")
+        let negations = ["not done", "not finished", "n't done", "n't finished", "not yet", "not quite", "almost done"]
+        guard !negations.contains(where: said.contains) else { return false }
+        let finishPhrases = [
+            "i'm done", "im done", "i am done", "we're done", "we are done", "all done",
+            "i'm finished", "im finished", "i am finished", "we're finished", "we are finished",
+            "done shopping", "finished shopping", "done with my list", "done with the list",
+            "finish my list", "finish the list", "finish list", "close my list", "close the list", "close list",
+            "finish my trip", "finish the trip", "end my trip", "end the trip", "end my list",
+            "that's all", "thats all", "that is all", "that's everything", "that is everything",
+        ]
+        return finishPhrases.contains(where: said.contains)
     }
 
     /// Trimmed text, or nil when it's missing or blank, so empty values are saved as NULL.
