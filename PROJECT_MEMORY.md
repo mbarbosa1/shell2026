@@ -15,25 +15,38 @@ This checklist records the current local implementation. Checked items are compl
 - [x] Emit `clearTemporalCandidates` when appropriate. Applying that signal to a future temporal matcher remains pending.
 - [x] Define `RecognitionImage` with a supplied pixel buffer, timestamp, resolution, orientation, and documented buffer ownership requirements. No camera session is created here.
 - [x] Validate declared image dimensions and caller-supplied crop bounds before gate evaluation.
-- [x] Convert a supplied pixel crop to a normalized Vision region of interest.
-- [x] Implement `VisionTextRecognizer` with `VNRecognizeTextRequest`, accurate recognition, `en-US`, language correction, and explicit image orientation. Real-image recognition accuracy remains unverified.
+- [x] Convert between original-buffer top-left pixel crops and oriented, normalized lower-left Vision regions, with independently specified coordinate tests for all eight ImageIO orientations.
+- [x] Implement `VisionTextRecognizer` with `VNRecognizeTextRequest`, accurate recognition, `en-US`, language correction, and explicit image orientation. Real-image and physical-device validation remain pending.
 - [x] Implement deterministic text normalization and word/adjacent-word tokenization, including case, whitespace, punctuation, Unicode normalization, and unit formatting.
 - [x] Implement `TextExtractionScheduler`: default stride of five active frames, configurable within 5–10, one in-flight request, and one replaceable pending eligible frame.
 - [x] Suppress new OCR work while inactive and discard an in-flight observation if the gate is inactive or its target differs at completion.
 - [x] Return `ProductTextObservation` with raw and normalized text, confidence, bounding boxes, timestamp, target identifier, and optional shelf side.
-- [x] Verify the existing package tests with `swift test --package-path ItemRecognition`: **54 tests passed, zero failures** on macOS using Xcode 27.0. Coverage comprises 20 activation-gate tests, 15 extraction-scheduler tests, 13 normalization tests, and 6 region-of-interest tests.
+- [x] Verify the package with `swift test --package-path ItemRecognition`: **64 tests passed, zero failures** on macOS using Xcode 27.0. Coverage comprises 20 activation-gate tests, 20 extraction-scheduler tests, 13 normalization tests, 8 region-of-interest tests, and 3 detector-policy tests.
+- [x] Implement automatic label/text-region detection when upstream does not provide a crop, with validated image-coordinate mapping. `VisionLabelRegionDetector` uses `VNDetectTextRectanglesRequest`, unions visible text boxes, adds an 8% margin per edge, and clips to image bounds. This is a text-bearing-region MVP, not a package-outline or SKU classifier.
+- [x] Integrate detection and OCR in the same bounded scheduler slot. Supplied crops bypass detection; no detected region skips OCR. Pause/target-change generations prevent obsolete work from reaching OCR or returning observations after reactivation.
+- [x] Add a barebones standalone physical-iPhone app in `ItemRecognitionDemo/`, with rear-camera preview, Start/Stop, raw/normalized text, OCR confidence, and processing time. It uses the local package's real automatic detector and OCR with a demo-only active context. The unsigned Debug build for `generic/platform=iOS` succeeded with Xcode 27.0; signed installation and camera behavior on an actual phone remain to be verified.
 
-The scheduler tests use `FakeRecognizer` and in-memory catalog stand-ins. Their passing results verify the tested control flow and transformations, not real Vision OCR accuracy, real SwiftData integration, or end-to-end product identification. Some implementation files are currently untracked local files; this checklist describes the working tree rather than a committed release.
+Scheduler unit tests use fake recognizers and detectors. Coordinate and detector-policy tests validate geometry and region selection without invoking real Vision inference. The synthetic image fixtures, generator, and real-Vision integration suite were removed at the user's request. This checklist describes the local working tree rather than a committed release.
+
+### Current automatic-detection behavior
+
+1. Validate the supplied image and any explicit crop, evaluate activation, and apply the existing 5–10-frame cadence.
+2. Use an explicit crop unchanged when supplied. Otherwise run `VisionLabelRegionDetector` on this same frame with its orientation metadata.
+3. Combine detected text boxes into one padded region. Convert it back to original-resolution stored-buffer pixel coordinates. No region returns `nil` from the scheduler without OCR.
+4. Convert that crop to the oriented Vision ROI and run OCR on the original pixel buffer. No resized image or box from another frame is substituted.
+5. Return the selected pixel crop in `ProductTextObservation.boundingBox`. Individual candidate boxes remain normalized lower-left coordinates relative to the whole oriented image.
+
+Several visible labels may be combined into one region. Isolating individual packages in a crowded shelf and identifying a catalog product are not provided by this detector. Camera ownership, SwiftData schema, localization, and catalog matching remain with their existing boundaries.
 
 ### Pending — required to complete product recognition
 
-- [ ] Add representative product-image fixtures and integration tests that invoke the real `VisionTextRecognizer`, including orientation, glare, blur, partial labels, and no-text images.
-- [ ] Implement automatic product/package/label-region detection when upstream does not provide a crop, with validated image-coordinate mapping.
+
+- [ ] Add photos of the actual demo products and validate detection/OCR on the intended iPhone, including real shelf clutter and optical glare/blur.
 - [ ] Integrate the database owner's concrete SwiftData `CatalogReading` adapter and preload the relevant catalog candidate snapshots.
 - [ ] Implement catalog matching and scoring for brand, product family, variant, and size, including conflict rejection and matching tests.
 - [ ] Implement temporal confirmation, candidate expiration, and consumption of the gate's candidate-clearing signal.
 - [ ] Implement `RecognitionCoordinator`, `ItemRecognitionResult`, and `ItemObservation`, including target completion and stale-result handling.
-- [ ] Integrate a runnable host iOS app with the upstream camera and localization inputs and a development view of recognition state and results.
+- [ ] Integrate the main iOS application with the real upstream camera and localization inputs. The standalone demo uses its own camera session and simulated activation inputs, not the navigation application's integration.
 - [ ] Connect optional result recording through the database owner's adapter if persistence is required.
 - [ ] Run end-to-end tests on the intended iPhone and record accuracy, wrong-variant acceptance, latency, memory, thermal behavior, and agreed acceptance thresholds.
 
@@ -41,12 +54,13 @@ The scheduler tests use `FakeRecognizer` and in-memory catalog stand-ins. Their 
 
 1. Open `ItemRecognition/Package.swift` in Xcode.
 2. Select the `ItemRecognition` package scheme and **My Mac** destination to reproduce the verified platform.
-3. Choose **Product > Test** (`Command-U`). Review all four suites in the Test navigator; the current suite contains 54 tests.
+3. Choose **Product > Test** (`Command-U`). Review all five suites in the Test navigator; the current suite contains 64 tests.
 4. Run individual `ActivationGateTests` with a breakpoint in `ActivationGate.evaluate` to inspect the state and inactive reason. The fixture uses `aisle_25_top` and an inclusive 3–20 metre window.
 5. Run `testFirstFourFramesSkipAndFifthRunsOCR` in `TextExtractionSchedulerTests` and inspect the unwrapped observation. The fake recognizer supplies `Honey Nut CHEERIOS` and `12 OZ`, which normalize to `honey nut cheerios` and `12oz`.
 6. Run `testPauseDiscardsPendingFrameAndInFlightResult` and `testResumeAfterPauseRequiresFreshStride` to inspect pause/resume behavior.
+7. Run `VisionRegionOfInterestTests` and `VisionLabelRegionDetectorTests` for coordinate mapping and detector-policy checks. Run `testPauseAndResumeDuringDetectionDiscardOldFrameBeforeOCR` for interruption behavior. These are unit tests, not real-image Vision integration tests.
 
-This package has no runnable camera application. Live product testing requires the pending host-app integration, and identifying a catalog item additionally requires matching and temporal confirmation.
+For live camera testing, open `ItemRecognitionDemo/ItemRecognitionDemo.xcodeproj`, select your signing team and connected physical iPhone, then run with Command-R and allow camera access. Hold the phone upright in portrait. Setup details are in `ItemRecognitionDemo/README.md`. The demo supplies reliable progress of 5 metres within a 3–20 metre activation window solely to exercise extraction without database/localization dependencies. Identifying a catalog item still requires matching and temporal confirmation. The standalone demo owns one camera session; the recognition library continues to consume supplied frames and owns none.
 
 ## Purpose
 
@@ -588,4 +602,3 @@ The database owner decides how these activation fields are represented in SwiftD
 9. Results leave this feature as `ItemRecognitionResult`; database, navigation, presentation, and sensor layers decide what to do next.
 10. SwiftData access is isolated behind `CatalogReading` and the optional `RecognitionResultRecording` protocol; no per-frame images, boxes, or OCR candidates are persisted by default.
 11. Xcode, Swift, Swift concurrency, SwiftData, Vision, Core ML, Core Video, Core Graphics/ImageIO, Foundation, XCTest, and Instruments are the explicit tools for this work.
-

@@ -2,7 +2,9 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 
-/// Runs OCR on supplied frames only while `ActivationGate` is `.active`.
+/// Detects a label region and runs OCR only while `ActivationGate` is `.active`.
+/// A supplied crop bypasses detection. Otherwise a detected region is required;
+/// no region returns nil without running OCR. Both stages share one bounded slot.
 ///
 /// Per submitted frame:
 ///
@@ -33,12 +35,14 @@ public actor TextExtractionScheduler {
 
     private let gate: ActivationGate
     private let recognizer: any TextRecognizing
+    private let regionDetector: any LabelRegionDetecting
     private let normalizer: any TextNormalizing
 
     /// Clamped to `strideRange` at init. Immutable, so readable without hopping to the actor.
     public nonisolated let frameStride: Int
 
     private var framesWhileActive = 0
+    private var generation: UInt = 0
     private var inFlight = false
     private var pending: PendingFrame?
 
@@ -46,15 +50,17 @@ public actor TextExtractionScheduler {
         gate: ActivationGate,
         recognizer: any TextRecognizing,
         normalizer: any TextNormalizing = TextNormalizer(),
-        frameStride: Int = TextExtractionScheduler.defaultStride
+        frameStride: Int = TextExtractionScheduler.defaultStride,
+        regionDetector: any LabelRegionDetecting = VisionLabelRegionDetector()
     ) {
         self.gate = gate
         self.recognizer = recognizer
+        self.regionDetector = regionDetector
         self.normalizer = normalizer
         self.frameStride = min(max(frameStride, Self.strideRange.lowerBound), Self.strideRange.upperBound)
     }
 
-    /// True while a Vision request is running.
+    /// True while the detection/OCR pipeline owns the processing slot.
     public var isRequestInFlight: Bool { inFlight }
 
     /// True while one eligible frame is waiting for the in-flight request.
@@ -76,6 +82,11 @@ public actor TextExtractionScheduler {
         try Self.validate(image, crop: crop)
 
         let decision = try await gate.evaluate(context)
+        if decision.clearTemporalCandidates {
+            generation &+= 1
+            framesWhileActive = 0
+            discardPending()
+        }
         guard decision.isDetectionActive else {
             framesWhileActive = 0
             discardPending()
@@ -87,7 +98,7 @@ public actor TextExtractionScheduler {
             return nil
         }
 
-        let frame = Frame(context: context, image: image, crop: crop)
+        let frame = Frame(context: context, image: image, crop: crop, generation: generation)
 
         if inFlight {
             return try await enqueueReplacingPending(frame)
@@ -134,6 +145,7 @@ public actor TextExtractionScheduler {
         let context: RecognitionContext
         let image: RecognitionImage
         let crop: CGRect?
+        let generation: UInt
     }
 
     private struct PendingFrame {
@@ -176,9 +188,19 @@ public actor TextExtractionScheduler {
     // MARK: - OCR
 
     private func perform(_ frame: Frame) async throws -> ProductTextObservation? {
-        let regionOfInterest = try frame.crop.map {
-            try VisionRegionOfInterest.normalized(pixelCrop: $0, imageSize: frame.image.imageResolution)
+        guard await isCurrent(frame) else { return nil }
+        let crop: CGRect
+        if let supplied = frame.crop {
+            crop = supplied
+        } else {
+            guard let detected = try await regionDetector.detectRegion(in: frame.image) else { return nil }
+            crop = detected
         }
+        // Do not start OCR if a pause or target change arrived during detection.
+        guard await isCurrent(frame) else { return nil }
+        let regionOfInterest = try VisionRegionOfInterest.normalized(
+            pixelCrop: crop, imageSize: frame.image.imageResolution, orientation: frame.image.orientation
+        )
 
         let lines = try await recognizer.recognizeText(
             in: frame.image,
@@ -188,8 +210,7 @@ public actor TextExtractionScheduler {
         // Finish-then-discard: the gate may have left .active or switched
         // target while Vision was working.
         let rule = await gate.loadedRule
-        let stillActive = await gate.currentState == .active
-        guard stillActive, rule?.targetItemID == frame.context.targetItemID else {
+        guard await isCurrent(frame) else {
             return nil
         }
 
@@ -205,9 +226,15 @@ public actor TextExtractionScheduler {
         return ProductTextObservation(
             timestamp: frame.image.timestamp,
             targetItemID: frame.context.targetItemID,
-            boundingBox: frame.crop ?? CGRect(origin: .zero, size: frame.image.imageResolution),
+            boundingBox: crop,
             candidates: candidates,
             side: rule?.side
         )
+    }
+
+    private func isCurrent(_ frame: Frame) async -> Bool {
+        let rule = await gate.loadedRule
+        let active = await gate.currentState == .active
+        return active && rule?.targetItemID == frame.context.targetItemID && frame.generation == generation
     }
 }

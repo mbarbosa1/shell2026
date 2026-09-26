@@ -14,5 +14,7 @@ public enum TextExtractionError: Error, Equatable {
         case resolutionMismatch(declared: CGSize, buffer: CGSize)
         /// The supplied crop is empty or extends outside the image.
         case cropOutsideImage(crop: CGRect, image: CGSize)
+        /// A detected Vision region is non-finite, empty, or outside normalized image bounds.
+        case invalidRegionOfInterest(CGRect)
     }
 }

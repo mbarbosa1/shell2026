@@ -54,6 +54,23 @@ private actor FakeRecognizer: TextRecognizing {
 
 // MARK: - Tests
 
+private actor FakeRegionDetector: LabelRegionDetecting {
+    private(set) var callCount = 0
+    var region: CGRect? = CGRect(x: 0, y: 0, width: 64, height: 48)
+    private var blocked = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func detectRegion(in image: RecognitionImage) async throws -> CGRect? {
+        callCount += 1
+        if blocked { await withCheckedContinuation { waiter = $0 } }
+        return region
+    }
+
+    func setRegion(_ region: CGRect?) { self.region = region }
+    func block() { blocked = true }
+    func release() { blocked = false; waiter?.resume(); waiter = nil }
+}
+
 final class TextExtractionSchedulerTests: XCTestCase {
 
     private let cerealID = UUID()
@@ -72,12 +89,13 @@ final class TextExtractionSchedulerTests: XCTestCase {
 
     private func makeScheduler(
         rules: [DetectionActivationRuleSnapshot]? = nil,
-        stride: Int = 5
+        stride: Int = 5,
+        detector: FakeRegionDetector = FakeRegionDetector()
     ) -> (TextExtractionScheduler, FakeRecognizer, ActivationGate) {
         let catalog = SchedulerTestCatalog(rules: rules ?? [cerealRule()])
         let gate = ActivationGate(catalog: catalog)
         let recognizer = FakeRecognizer()
-        let scheduler = TextExtractionScheduler(gate: gate, recognizer: recognizer, frameStride: stride)
+        let scheduler = TextExtractionScheduler(gate: gate, recognizer: recognizer, frameStride: stride, regionDetector: detector)
         return (scheduler, recognizer, gate)
     }
 
@@ -208,7 +226,7 @@ final class TextExtractionSchedulerTests: XCTestCase {
         XCTAssertEqual(observation.candidates[1].normalizedText, "12oz")
 
         let roi = await recognizer.lastRegionOfInterest
-        XCTAssertEqual(roi, .some(nil), "full frame uses Vision's default region")
+        XCTAssertEqual(roi, .some(CGRect(x: 0, y: 0, width: 1, height: 1)), "fake detector selects the full frame")
     }
 
     func testEveryStrideThFrameRunsWhileActive() async throws {
@@ -277,6 +295,76 @@ final class TextExtractionSchedulerTests: XCTestCase {
     }
 
     // MARK: - Latest frame wins
+
+    func testAutomaticRegionIsDetectedOnlyOnEligibleActiveFrames() async throws {
+        let detector = FakeRegionDetector()
+        let crop = CGRect(x: 8, y: 6, width: 40, height: 24)
+        await detector.setRegion(crop)
+        let (scheduler, recognizer, _) = makeScheduler(detector: detector)
+        try await submitFrames(10, to: scheduler, context: context(pause: true))
+        try await submitFrames(4, to: scheduler, context: context())
+        let before = await detector.callCount
+        XCTAssertEqual(before, 0)
+        let result = try await scheduler.submit(context(), image: image())
+        XCTAssertEqual(try XCTUnwrap(result).boundingBox, crop)
+        let calls = await detector.callCount
+        let roi = await recognizer.lastRegionOfInterest
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(roi, .some(try VisionRegionOfInterest.normalized(pixelCrop: crop, imageSize: CGSize(width: 64, height: 48))))
+    }
+
+    func testSuppliedCropBypassesAutomaticDetection() async throws {
+        let detector = FakeRegionDetector()
+        let (scheduler, _, _) = makeScheduler(detector: detector)
+        try await submitFrames(4, to: scheduler, context: context())
+        let crop = CGRect(x: 10, y: 10, width: 20, height: 20)
+        let result = try await scheduler.submit(context(), image: image(), crop: crop)
+        XCTAssertEqual(try XCTUnwrap(result).boundingBox, crop)
+        let calls = await detector.callCount
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testNoDetectedRegionSkipsOCR() async throws {
+        let detector = FakeRegionDetector()
+        await detector.setRegion(nil)
+        let (scheduler, recognizer, _) = makeScheduler(detector: detector)
+        let results = try await submitFrames(5, to: scheduler, context: context())
+        XCTAssertTrue(results.allSatisfy { $0 == nil })
+        let calls = await recognizer.callCount
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testInvalidDetectedCropThrowsBeforeOCR() async throws {
+        let detector = FakeRegionDetector()
+        await detector.setRegion(CGRect(x: 50, y: 0, width: 50, height: 10))
+        let (scheduler, recognizer, _) = makeScheduler(detector: detector)
+        do {
+            try await submitFrames(5, to: scheduler, context: context())
+            XCTFail("Out-of-buffer detector output must fail")
+        } catch let error as TextExtractionError {
+            guard case .invalidImage(.cropOutsideImage) = error else { return XCTFail("Unexpected \(error)") }
+        }
+        let calls = await recognizer.callCount
+        let inFlight = await scheduler.isRequestInFlight
+        XCTAssertEqual(calls, 0)
+        XCTAssertFalse(inFlight)
+    }
+
+    func testPauseAndResumeDuringDetectionDiscardOldFrameBeforeOCR() async throws {
+        let detector = FakeRegionDetector()
+        await detector.block()
+        let (scheduler, recognizer, _) = makeScheduler(detector: detector)
+        try await submitFrames(4, to: scheduler, context: context())
+        let oldFrame = Task { try await scheduler.submit(self.context(), image: self.image()) }
+        await waitUntil({ await detector.callCount == 1 }, "detector running")
+        _ = try await scheduler.submit(context(pause: true), image: image())
+        _ = try await scheduler.submit(context(), image: image())
+        await detector.release()
+        let result = try await oldFrame.value
+        let calls = await recognizer.callCount
+        XCTAssertNil(result)
+        XCTAssertEqual(calls, 0, "Resuming must not revive a pre-pause detection")
+    }
 
     func testNewerEligibleFrameReplacesPendingFrame() async throws {
         let (scheduler, recognizer, _) = makeScheduler(stride: 5)

@@ -5,7 +5,7 @@ import Foundation
 /// after `TextNormalizing`.
 ///
 /// `boundingBox` is Vision's normalized rectangle for the line (origin lower-left, relative
-/// to the whole image) and is carried so a later matcher can reason about
+/// to the whole oriented image) and is carried so a later matcher can reason about
 /// where on the package a term appeared.
 public struct RecognizedTextCandidate: Sendable, Hashable {
     public let rawText: String
@@ -26,12 +26,11 @@ public struct RecognizedTextCandidate: Sendable, Hashable {
 ///
 /// `boundingBox` is the region OCR ran on, in stored-buffer pixel coordinates
 /// with a top-left origin: the caller's crop when one was supplied, otherwise
-/// the full frame. `side` is copied from the activation rule and stays `nil`
+/// the automatically detected, padded region. `side` is copied from the activation rule and stays `nil`
 /// when the database branch supplied none; it is metadata only.
 ///
-/// An observation with an empty `candidates` array means OCR ran and found notext. 
-/// 
-/// A `nil` return from the scheduler means OCR did not run.
+/// An observation with an empty `candidates` array means OCR ran and found no text.
+/// A `nil` return means the frame was skipped or its result was discarded.
 public struct ProductTextObservation: Sendable, Equatable {
     public let timestamp: TimeInterval
     public let targetItemID: UUID
