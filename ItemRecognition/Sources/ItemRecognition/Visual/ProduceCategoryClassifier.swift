@@ -43,7 +43,8 @@ public struct ProduceTaxonomy: Decodable, Sendable {
 
 /// Broad MVP produce categories. `base` is the on-device model: Apple Vision now,
 /// or a Create ML detector trained on the same labels later. When `cloud` is set
-/// and local produce evidence is weak, one crop is sent for a cloud suggestion.
+/// and local produce evidence stays weak for `weakFramesBeforeRequest`
+/// consecutive processed frames, one crop is sent for a cloud suggestion.
 public actor ProduceCategoryClassifier: VisualClassifying {
     public static let modelID = "mvp.produce.categories.v1"
     private let base: any VisualClassifying
@@ -52,6 +53,9 @@ public actor ProduceCategoryClassifier: VisualClassifying {
     private let cloudPolicy: CloudAssistPolicy
     private lazy var imageContext = CIContext()
     private var cloudRequests = 0
+    /// Consecutive processed frames below `localScoreBelow` since the last
+    /// strong frame or cloud request. Skipped video frames never reach here.
+    private var weakStreak = 0
 
     public init(base: any VisualClassifying = VisionImageClassifier(),
                 cloud: (any CloudProduceLabeling)? = nil,
@@ -75,8 +79,14 @@ public actor ProduceCategoryClassifier: VisualClassifying {
             modelVersion: version, inputRegion: result.inputRegion, classifications: local,
             backgroundLabel: background)
         let localProduceScore = local.first { $0.identifier != "unknown" }?.score ?? 0
-        guard let cloud, localProduceScore < cloudPolicy.localScoreBelow else { return localObservation }
-        guard cloudRequests < cloudPolicy.maximumRequests else {
+        guard let cloud, localProduceScore < cloudPolicy.localScoreBelow else {
+            weakStreak = 0
+            return localObservation
+        }
+        weakStreak += 1
+        guard weakStreak >= cloudPolicy.weakFramesBeforeRequest else { return localObservation }
+        weakStreak = 0
+        guard cloudRequests < cloudPolicy.maximumRequestsPerItem, cloudRequests < cloudPolicy.maximumRequests else {
             return VisualObservation(timestamp: result.timestamp, modelID: Self.modelID, modelVersion: version,
                 inputRegion: result.inputRegion, classifications: local,
                 diagnostic: "Cloud assist request limit reached; using on-device result.", backgroundLabel: background)

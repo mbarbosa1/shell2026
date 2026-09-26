@@ -20,16 +20,25 @@ public protocol CloudProduceLabeling: Sendable {
     func label(jpeg: Data, allowedLabels: [String]) async throws -> CloudProduceLabel
 }
 
-/// Ask the cloud only when the best local produce score is below `localScoreBelow`.
-/// The scheduler's single inference slot already serializes requests, so a weak
-/// local frame is never interleaved between cloud answers (that would reset
-/// temporal confirmation). `maximumRequests` bounds cost per classifier instance.
+/// Ask the cloud only after `weakFramesBeforeRequest` consecutive processed
+/// frames whose best local produce score is below `localScoreBelow`. One blurry
+/// video frame stays on device; a streak means this look will not confirm
+/// locally. Each request resets the streak. `maximumRequestsPerItem` bounds
+/// calls per classifier instance (one selected item per scan), and
+/// `maximumRequests` remains a session backstop. The scheduler's single
+/// inference slot already serializes requests, so a weak local frame is never
+/// interleaved between cloud answers (that would reset temporal confirmation).
 public struct CloudAssistPolicy: Sendable {
     public let localScoreBelow: Float
+    public let weakFramesBeforeRequest: Int
+    public let maximumRequestsPerItem: Int
     public let maximumRequests: Int
     public let maxImageDimension: CGFloat
-    public init(localScoreBelow: Float = 0.8, maximumRequests: Int = 200, maxImageDimension: CGFloat = 512) {
+    public init(localScoreBelow: Float = 0.8, weakFramesBeforeRequest: Int = 3, maximumRequestsPerItem: Int = 2,
+                maximumRequests: Int = 200, maxImageDimension: CGFloat = 512) {
         self.localScoreBelow = localScoreBelow.isFinite ? min(max(localScoreBelow, 0), 1) : 0.8
+        self.weakFramesBeforeRequest = max(1, weakFramesBeforeRequest)
+        self.maximumRequestsPerItem = max(0, maximumRequestsPerItem)
         self.maximumRequests = max(0, maximumRequests)
         self.maxImageDimension = maxImageDimension.isFinite ? max(64, maxImageDimension) : 512
     }
