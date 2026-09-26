@@ -31,13 +31,20 @@ Choose **Camera only (no database)** on the landing screen for the original test
 1. Hold the phone **upright in portrait**. The app uses the rear wide-angle camera.
 2. Point at a clear product label or printed page in good lighting. Keep it in
    focus and avoid holding it too close to the lens.
-3. The camera preview appears above the latest extracted lines. Each line shows
-   raw text, normalized text, and OCR confidence. The status reports line count
-   and detection-plus-OCR time; this is not a product-identity score.
+3. The camera preview is followed by an **Extracted text** card: the latest
+   OCR lines, Vision's mean **OCR confidence** for that frame, and (in a
+   database scan) the catalog **Match** confidence. Skipped frames keep the
+   last extraction so the text does not flicker. The list below repeats each
+   line with its own confidence. The status reports line count and
+   detection-plus-OCR time; OCR confidence is Vision's read quality, not a
+   product-identity score.
 4. Tap **Stop (keep text)** to freeze the result for inspection. Tap **Start camera**
    to clear the old text and start a fresh recognition session.
-5. If text disappears, the latest eligible frame contained no detected region or
-   readable text. Move closer, improve lighting, or try larger printed text.
+5. If text disappears, the latest eligible frame contained no detected region,
+   no readable text, or a package whose text was under 32 pixels tall. The
+   guidance line under the preview says what to do ("Move closer to the item",
+   "Move more to the right", …); otherwise improve lighting or try larger
+   printed text.
 
 The camera stops when the app becomes inactive and starts again when it returns
 to the foreground. If access is denied, use the in-app settings button to allow
@@ -105,35 +112,126 @@ The choice is per product, made once when the scan session starts:
   (fresh produce: onion, apple, banana, orange, lime, grape, strawberry, avocado,
   carrot, cucumber) → image recognition. Text detection and OCR never run.
 - **Not mapped** (all packaged products, including cereal or snacks that show
-  fruit on the box) → label detection plus OCR, unchanged.
+  fruit on the box) → package crop plus OCR (below).
 
 Both paths share one inference slot and the same activation gate and
 three-observation confirmation; evidence from the two paths is never combined.
+A single failed OCR frame never switches. **Three processed frames in a row with no extracted text** (the ones that say "Move closer to the item") leave OCR for Apple Vision, and Gemini still waits for its own three weak visual frames. The next confident result — the OCR words, or the object Apple Vision or Gemini names — stops the scan. The screen asks **Yes, that's it** or **No, keep looking**. Yes ends the scan. No keeps looking on the path already chosen.
+
+### Package crop before OCR
+
+For a packaged product the detector first looks for the package itself. Vision's
+rectangle detector proposes up to three rectangles; the largest one with
+confidence of at least **0.5** becomes the crop. That 0.5 only accepts the crop.
+It says nothing about which product it is: the product is still confirmed from
+the words (70% coverage, 15-point lead, three observations).
+
+Text boxes inside that rectangle are unioned, padded 8%, and clipped to the
+package, so a neighboring box on the shelf is left out. OCR then reads that
+region of the **original** camera frame. Nothing is scaled up: if the tallest
+text line inside the package is under 32 pixels, the frame is skipped and the
+app waits for a closer frame, which adds real pixels. Move closer instead of
+expecting a zoom. When no rectangle reaches 0.5 (a printed page in camera-only
+mode, for example), every visible text box is unioned as before.
+
+### What the screen tells the user
+
+Two lines sit directly under the camera preview. The user cannot check the
+image themselves, so the app says what it is doing and what to do next, in
+plain words. No coordinates are ever shown.
+
+**Recognition mode** (always visible; orange when the heavier model runs):
+
+| Text on screen | When |
+|---|---|
+| `Using OCR to read the label` | Packaged product; text is being read on the phone |
+| `Using on-device Apple Vision` | Mapped produce; Apple's classifier on the phone |
+| `Using cloud assist (Gemini)` | The frame's answer came from the Gemini proxy |
+
+The Gemini line appears only on frames whose evidence came from the cloud; the
+on-device frames between the two allowed calls go back to the Apple Vision line.
+
+**Guidance** (shown only when the latest processed frame has advice; cleared
+when the item is framed well). OCR path only:
+
+| Text on screen | When |
+|---|---|
+| `Move closer to the item` | Package text too small and the package covers under a quarter of the frame, or nothing readable is in view |
+| `Keep walking toward the item` | The package is already large but its text is still under 32 pixels |
+| `Move more to the left` | The package (or the text, with no package) sits in the left third of the frame |
+| `Move more to the right` | It sits in the right third |
+
+Left and right mean the way the user should step so the item ends up in the
+middle of the phone. An off-centre package is still read on that frame; only
+the "too small" cases skip OCR. Both lines are also printed in the Xcode console
+as `[ItemRecognition] Mode: …` and `[ItemRecognition] Guidance: …` when they
+change. `RecognitionUpdate.guidance` and `RecognitionUpdate.modeNotice` carry
+the same values for ShellApp.
 
 ### Reading visual scores
 
-For produce, the selected item's label must reach **30%** and lead every other
-produce label by **10 points**. Background labels are folded into `unknown` and
-do not compete, because Apple Vision scores each label independently (a table
-and an onion can both score high). The screen and the Xcode console always show
-the selected item's label, other produce labels above 0%, and the real label
-behind `unknown`, highest first:
+For produce, the selected item's label must reach
+`VisualRecognitionPolicy.appleVisionProduce.minimumScore` (currently **50%**)
+and lead every other produce label by **10 points**. Background labels are
+folded into `unknown` and do not compete, because Apple Vision scores each label
+independently (a table and an onion can both score high). The screen and the
+Xcode console always show the selected item's label, other produce labels above
+0%, and the real label behind `unknown`, highest first:
 
 ```text
-[ItemRecognition] candidate | ... | Visual: unknown(table)=73%, onion=31%, potato=4% | [on-device] ...
+[ItemRecognition] noMatch | ... | Visual: unknown(table)=73%, onion=31%, potato=4% | [on-device] ...
 ```
 
-Here onion passes: 31% ≥ 30% and it leads potato by 27 points. The same rule
-applies to apple, orange, and every other mapped item. Three passing
-observations in a row, each no more than 2 seconds apart, confirm the product.
+Here onion leads potato by 27 points but 31% is below the 50% threshold, so the
+frame does not count. The same rule applies to apple, orange, and every other
+mapped item. Three passing observations in a row, each no more than 2 seconds
+apart, confirm the product.
+
+### Match confidence
+
+`ItemRecognitionResult.matchConfidence` (0…1) answers "how closely do the
+recent frames match the selected product?" independently of the status. Per
+frame it is the selected label's share among produce labels (background
+excluded), scaled so that reaching the threshold alone counts as full strength,
+and 0 when the label is below the 10% noise floor. The value is averaged over
+the last three processed frames so it does not flicker. Examples with a 30%
+threshold: onion 31% / potato 4% → 0.89; onion 35% / potato 30% → 0.54; a
+cereal box (onion 0–4%) → 0. A Gemini answer contributes its own confidence for
+its label and 0 for any other. The demo shows it as `match N%` in the status
+line and as `Match: N%` in the console line, which reprints whenever the value
+crosses a 10-point step:
+
+```text
+[ItemRecognition] noMatch | Match: 55% | Item: No confirmed database match | Visual: unknown(table)=73%, onion=31%, potato=4% | ...
+```
 
 ### Optional cloud assist
 
 In the setup screen, **Cloud assist for produce** sends a downscaled crop to
-`ItemRecognition/CloudProxy/` only when the on-device produce score is below
-30%. The proxy calls Gemini and holds the Google AI Studio key; the app stores only the proxy URL and a
-proxy token. Cloud answers are shown as `[cloud]`, must pass the same threshold
-and confirmation, and any timeout or error falls back to the on-device result.
+`ItemRecognition/CloudProxy/` after **three consecutive processed frames** whose
+on-device produce score is below the produce threshold. The camera is a video
+stream and only every fifth frame is processed, so one blurry frame stays on the
+phone; three weak processed frames in a row mean this look will not confirm
+locally. The proxy calls Gemini and holds the Google AI Studio key; the app
+stores only the proxy URL and a proxy token.
+
+Frame counting per selected item, in processed frames:
+
+| Processed frame | Local score | What happens |
+|---|---|---|
+| 1, 2 | weak | Stay on device |
+| 3 | weak | First Gemini call |
+| 4, 5 | weak | Stay on device |
+| 6 | weak | Second and last Gemini call for this item |
+| 7 onward | weak | Stay on device until the next product |
+
+A strong frame resets the count. Cloud answers are shown as `[cloud]`, must
+pass the same threshold, and count as one accepted observation each. Returning
+the product still takes three accepted observations within two seconds, and the
+weak on-device frames between two cloud answers reset that count, so two cloud
+answers alone leave the item a **candidate** until an on-device frame also
+clears the threshold. Any timeout or error falls back to the on-device result
+and still uses up one of the two calls.
 Run the proxy with `CLOUD_PROXY_MOCK_LABEL=onion` to test the connection
 without an API key; see `ItemRecognition/CloudProxy/README.md`.
 
@@ -155,7 +253,8 @@ its validation split.
 The demo owns one `AVCaptureSession` and supplies upright BGRA pixel buffers to
 `RecognitionCoordinator`. Its shared `RecognitionFrameScheduler` routes mapped
 visual items to classification before text detection; the OCR path uses
-`VisionLabelRegionDetector` and `VisionTextRecognizer`. The public
+`VisionLabelRegionDetector` (package rectangle, then text inside it) and
+`VisionTextRecognizer`. The public
 `TextExtractionScheduler` remains an OCR compatibility facade. No explicit crop
 is supplied by the demo. It processes every fifth submitted active frame; capture drops incoming
 frames while a submission runs rather than creating an unbounded task backlog.
