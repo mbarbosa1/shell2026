@@ -16,6 +16,13 @@ struct ShopView: View {
                 ListeningHeader(isListening: model.isListening)
                     .padding(.top, 16)
 
+                if let voiceError = model.voiceError {
+                    Text(voiceError)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.top, 8)
+                }
+
                 if let transcript = model.transcript {
                     TranscriptCard(transcript: transcript, confirmation: model.confirmation)
                         .padding(.top, 12)
@@ -48,7 +55,7 @@ struct ShopView: View {
 
                 VStack(spacing: 10) {
                     Button(model.isListening ? "Pause listening" : "Resume listening") {
-                        model.isListening.toggle()
+                        Task { await model.setListening(!model.isListening) }
                     }
                     .buttonStyle(SecondaryButtonStyle())
 

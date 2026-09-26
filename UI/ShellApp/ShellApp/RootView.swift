@@ -27,6 +27,7 @@ struct RootView: View {
         .fullScreenCover(isPresented: $model.isCameraOpen) {
             CameraScreen()
         }
+        .task { await model.startVoice() }
     }
 }
 

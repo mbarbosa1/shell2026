@@ -1,8 +1,9 @@
 import Foundation
 import Observation
 
-/// UI state for the screens, filled with sample data from the Figma.
-/// Later, the voice agent can update these properties.
+/// UI state for the screens. The list starts with sample data from the Figma;
+/// the voice agent (`VoiceAgent`) updates it through the methods below.
+@MainActor
 @Observable
 final class AppModel {
     var items: [GroceryItem] = [
@@ -26,17 +27,25 @@ final class AppModel {
     ]
     /// The newest cart item, highlighted as "Just added".
     var justAddedCartID: CartItem.ID?
-    var isListening = true
+    /// True while the voice agent is connected and the microphone is unmuted.
+    var isListening = false
     var isDeviceConnected = true
-    var transcript: String? = "Add bananas and my usual oat milk."
-    var confirmation: String? = "Oat milk added to your list"
+    /// The last thing the user said to the voice agent.
+    var transcript: String?
+    /// What the voice agent last did, e.g. "Oat milk added to your list".
+    var confirmation: String?
+    /// Why the voice agent couldn't connect, shown under the listening header.
+    var voiceError: String?
     /// The most recently added item gets an outline.
     var highlightedItemID: GroceryItem.ID?
     var isCameraOpen = false
 
+    @ObservationIgnored private var voice: VoiceAgent?
+
     init() {
         highlightedItemID = items.last?.id
         justAddedCartID = cart.last?.id
+        voice = VoiceAgent(model: self)
     }
 
     func toggleCollected(_ id: GroceryItem.ID) {
@@ -50,6 +59,53 @@ final class AppModel {
 
     func addUsualsToList() {
         items += usuals.filter { !isOnList($0) }
+    }
+
+    // MARK: Voice agent
+
+    func startVoice() async {
+        await voice?.start()
+    }
+
+    func setListening(_ isListening: Bool) async {
+        await voice?.setListening(isListening)
+    }
+
+    func addItem(_ item: GroceryItem) {
+        items.append(item)
+        highlightedItemID = item.id
+        confirmation = "\(item.name) added to your list"
+    }
+
+    /// Returns false if no item has that name.
+    func removeItem(named name: String) -> Bool {
+        guard let index = firstIndex(named: name) else { return false }
+        let removed = items.remove(at: index)
+        confirmation = "\(removed.name) removed from your list"
+        return true
+    }
+
+    /// Returns false if no item has that name.
+    func checkOffItem(named name: String) -> Bool {
+        guard let index = firstIndex(named: name) else { return false }
+        items[index].isCollected = true
+        confirmation = "\(items[index].name) checked off"
+        return true
+    }
+
+    /// The list as text for the agent: "Bananas (3 bananas · Fresh produce), Oat milk (…, in cart)".
+    var listSummary: String {
+        guard !items.isEmpty else { return "The list is empty." }
+        let entries = items.map { item in
+            var parts = [item.detail].filter { !$0.isEmpty }
+            if item.isCollected { parts.append("in cart") }
+            return parts.isEmpty ? item.name : "\(item.name) (\(parts.joined(separator: ", ")))"
+        }
+        return "The list: " + entries.joined(separator: ", ") + "."
+    }
+
+    private func firstIndex(named name: String) -> Int? {
+        items.firstIndex { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
     }
 }
 

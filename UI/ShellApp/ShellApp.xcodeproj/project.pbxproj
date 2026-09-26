@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C6743B1C3067FF220083994F /* ElevenLabs in Frameworks */ = {isa = PBXBuildFile; productRef = C6743B1B3067FF220083994F /* ElevenLabs */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		5A1000000000000000000001 /* ShellApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShellApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C6743B1C3067FF220083994F /* ElevenLabs in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = ShellApp;
 			packageProductDependencies = (
+				C6743B1B3067FF220083994F /* ElevenLabs */,
 			);
 			productName = ShellApp;
 			productReference = 5A1000000000000000000001 /* ShellApp.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = 5A1000000000000000000004;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C6743B1A3067FF220083994F /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5A1000000000000000000005 /* Products */;
 			projectDirPath = "";
@@ -180,6 +189,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ShellApp;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Automatically identify groceries and read product labels with your mounted phone.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Talk with your shopping assistant by voice";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -212,6 +222,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ShellApp;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Automatically identify groceries and read product labels with your mounted phone.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Talk with your shopping assistant by voice";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -254,6 +265,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C6743B1A3067FF220083994F /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/elevenlabs/elevenlabs-swift-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.3.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C6743B1B3067FF220083994F /* ElevenLabs */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C6743B1A3067FF220083994F /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */;
+			productName = ElevenLabs;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5A100000000000000000000A /* Project object */;
 }
