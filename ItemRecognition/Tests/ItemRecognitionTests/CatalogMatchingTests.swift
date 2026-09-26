@@ -87,9 +87,46 @@ final class CatalogMatchingTests: XCTestCase {
         catch { XCTAssertTrue(error is RecognitionSessionError) }
     }
 
-    private func session(recognizer: MatchingRecognizer = MatchingRecognizer()) async throws -> RecognitionCoordinator {
+    func testOCRUpdatesReportOCRModeAndCarryDetectorGuidance() async throws {
+        let session = try await session(detector: MatchingRegion(guidance: .moveRight))
+        var processed: RecognitionUpdate?
+        for index in 1...5 {
+            let update = try await session.submit(context(), image: image(Double(index) / 10))
+            XCTAssertEqual(update.modeNotice, .ocrOnly, "every update names the recognizer, even skipped frames")
+            if update.result != nil { processed = update }
+        }
+        XCTAssertEqual(processed?.guidance, .moveRight, "an off-centre package still reads, with a hint")
+        XCTAssertEqual(processed?.result?.status, .candidate)
+    }
+
+    func testIllegibleTextSkipsOCRButStillTellsTheUserToMoveCloser() async throws {
+        let recognizer = MatchingRecognizer()
+        let session = try await session(recognizer: recognizer, detector: MatchingRegion(crop: nil, guidance: .moveCloser))
+        var processed: RecognitionUpdate?
+        for index in 1...5 {
+            let update = try await session.submit(context(), image: image(Double(index) / 10))
+            if update.result != nil { processed = update }
+        }
+        XCTAssertEqual(processed?.guidance, .moveCloser)
+        XCTAssertEqual(processed?.guidance?.message, "Move closer to the item")
+        XCTAssertEqual(processed?.result?.status, .noMatch)
+        XCTAssertNil(processed?.observation)
+        XCTAssertEqual(processed?.modeNotice, .ocrOnly)
+        let calls = await recognizer.calls
+        XCTAssertEqual(calls, 0, "no crop means OCR never ran on interpolated pixels")
+    }
+
+    func testDisabledGateStillNamesTheSessionMode() async throws {
+        let update = try await session().submit(context(meters: 1), image: image(1))
+        XCTAssertEqual(update.result?.status, .disabled)
+        XCTAssertEqual(update.modeNotice, .ocrOnly)
+        XCTAssertNil(update.guidance)
+    }
+
+    private func session(recognizer: MatchingRecognizer = MatchingRecognizer(),
+                         detector: MatchingRegion = MatchingRegion()) async throws -> RecognitionCoordinator {
         try await RecognitionCoordinator(targetID: targetID, catalog: MatchingCatalog(targetID: targetID, candidates: candidates),
-            recognizer: recognizer, detector: MatchingRegion())
+            recognizer: recognizer, detector: detector)
     }
     private func context(meters: Double = 5, pause: Bool = false) -> RecognitionContext {
         RecognitionContext(targetItemID: targetID, landmarkProgress: LandmarkProgressObservation(timestamp: 0,
@@ -111,7 +148,11 @@ private struct MatchingCatalog: CatalogReading {
     }
 }
 private struct MatchingRegion: LabelRegionDetecting {
-    func detectRegion(in image: RecognitionImage) async throws -> CGRect? { CGRect(x: 0, y: 0, width: 64, height: 48) }
+    var crop: CGRect? = CGRect(x: 0, y: 0, width: 64, height: 48)
+    var guidance: RecognitionGuidance?
+    func detectRegion(in image: RecognitionImage) async throws -> LabelRegionDetection {
+        LabelRegionDetection(crop: crop, guidance: guidance)
+    }
 }
 private actor MatchingRecognizer: TextRecognizing {
     private(set) var calls = 0

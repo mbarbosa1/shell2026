@@ -305,6 +305,27 @@ final class CloudAssistTests: XCTestCase {
         XCTAssertFalse(statuses.contains(.confirmed), "stays a candidate until an on-device frame also passes: \(statuses)")
     }
 
+    /// The user is told when the heavier model answers: `.cloudAssist` only on the
+    /// frames whose evidence came from Gemini, `.appleVision` on every other visual frame.
+    func testModeNoticeNamesGeminiOnlyOnCloudFrames() async throws {
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.2), cloud: FakeCloud())
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier)
+        var notices: [RecognitionModeNotice] = []
+        for frame in 1...35 {
+            let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
+            XCTAssertNil(update.guidance, "visual mode gives no OCR framing advice")
+            guard update.result != nil else {
+                XCTAssertEqual(update.modeNotice, .appleVision, "skipped frames still name the session's recognizer")
+                continue
+            }
+            notices.append(update.modeNotice)
+        }
+        XCTAssertEqual(notices, [.appleVision, .appleVision, .cloudAssist, .appleVision, .appleVision, .cloudAssist, .appleVision])
+        XCTAssertEqual(RecognitionModeNotice.cloudAssist.message, "Using cloud assist (Gemini)")
+        XCTAssertEqual(RecognitionModeNotice.appleVision.message, "Using on-device Apple Vision")
+        XCTAssertEqual(RecognitionModeNotice.ocrOnly.message, "Using OCR to read the label")
+    }
+
     /// Weak ×3 (cloud #1), weak ×3 (cloud #2), then two on-device frames that pass:
     /// cloud #2 plus those two make the three accepted observations.
     func testCloudAnswerMixedWithLaterLocalPassesConfirmsThroughCoordinator() async throws {

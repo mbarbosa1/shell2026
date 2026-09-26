@@ -24,7 +24,7 @@ public actor TextExtractionScheduler {
     public func submit(_ context: RecognitionContext, image: RecognitionImage,
                        crop: CGRect? = nil) async throws -> ProductTextObservation? {
         switch try await scheduler.submit(context, image: image, crop: crop) {
-        case .processed(.text(let observation)): return observation
+        case .processed(.text(let observation, _)): return observation
         default: return nil
         }
     }

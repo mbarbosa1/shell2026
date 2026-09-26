@@ -247,7 +247,7 @@ private struct UnexpectedOCR: TextRecognizing {
     }
 }
 private struct UnexpectedTextDetector: LabelRegionDetecting {
-    func detectRegion(in image: RecognitionImage) async throws -> CGRect? {
-        XCTFail("Visual mode invoked text detection"); return nil
+    func detectRegion(in image: RecognitionImage) async throws -> LabelRegionDetection {
+        XCTFail("Visual mode invoked text detection"); return .none
     }
 }

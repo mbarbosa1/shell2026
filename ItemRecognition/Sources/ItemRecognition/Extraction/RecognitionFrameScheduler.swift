@@ -3,7 +3,10 @@ import CoreVideo
 import Foundation
 
 enum RecognitionFrameEvidence: Sendable {
-    case text(ProductTextObservation?)
+    /// OCR result (nil when no region was read) plus any user-facing direction
+    /// from detection. Guidance survives a nil observation so "text too small"
+    /// still reaches the app as "move closer".
+    case text(ProductTextObservation?, guidance: RecognitionGuidance?)
     case visual(VisualObservation)
 }
 
@@ -188,12 +191,15 @@ actor RecognitionFrameScheduler {
             return .processed(.visual(observation))
         }
         let crop: CGRect
+        var guidance: RecognitionGuidance?
         if let supplied = frame.crop {
             crop = supplied
         } else {
-            guard let detected = try await regionDetector.detectRegion(in: frame.image) else {
+            let detection = try await regionDetector.detectRegion(in: frame.image)
+            guidance = detection.guidance
+            guard let detected = detection.crop else {
                 guard await isCurrent(frame) else { return .discarded }
-                return .processed(.text(nil))
+                return .processed(.text(nil, guidance: guidance))
             }
             crop = detected
         }
@@ -230,7 +236,7 @@ actor RecognitionFrameScheduler {
             boundingBox: crop,
             candidates: candidates,
             side: rule?.side
-        )))
+        ), guidance: guidance))
     }
 
     private func isCurrent(_ frame: Frame) async -> Bool {

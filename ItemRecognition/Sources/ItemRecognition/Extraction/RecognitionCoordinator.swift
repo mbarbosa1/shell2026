@@ -7,6 +7,13 @@ public struct RecognitionUpdate: Sendable {
     public let result: ItemRecognitionResult?
     public var visualObservation: VisualObservation? { result?.visualEvidence }
     public let side: ShelfSide?
+    /// Plain-language direction for the user from this frame's detection
+    /// ("Move closer to the item"). Nil when the item is framed well enough.
+    public let guidance: RecognitionGuidance?
+    /// Which recognizer produced this update. `.cloudAssist` only when the
+    /// evidence itself came back from Gemini; on-device frames between cloud
+    /// calls report `.appleVision`.
+    public let modeNotice: RecognitionModeNotice
     public var confirmedObservation: ItemObservation? {
         guard let result, result.status == .confirmed, let itemID = result.matchedItemID else { return nil }
         return ItemObservation(timestamp: result.timestamp, itemID: itemID, matchConfidence: result.matchConfidence,
@@ -14,8 +21,10 @@ public struct RecognitionUpdate: Sendable {
                                evidenceSource: result.evidenceSource, visualEvidence: result.visualEvidence)
     }
     public init(gate: ActivationDecision, observation: ProductTextObservation?,
-                result: ItemRecognitionResult?, side: ShelfSide? = nil) {
+                result: ItemRecognitionResult?, side: ShelfSide? = nil,
+                guidance: RecognitionGuidance? = nil, modeNotice: RecognitionModeNotice) {
         self.gate = gate; self.observation = observation; self.result = result; self.side = side
+        self.guidance = guidance; self.modeNotice = modeNotice
     }
 }
 
@@ -89,14 +98,20 @@ public actor RecognitionCoordinator {
 
     private func resetEvidence() { confirmation.reset(); smoother.reset() }
 
+    /// Notice for updates that carry no evidence: the session's current path.
+    private var sessionNotice: RecognitionModeNotice {
+        visualModel == nil ? .ocrOnly : .appleVision
+    }
+
     public func submit(_ context: RecognitionContext, image: RecognitionImage, crop: CGRect? = nil) async throws -> RecognitionUpdate {
         guard !stopped else { throw RecognitionSessionError.stopped }
         try TextExtractionScheduler.validate(image, crop: crop)
         let decision = try await updateContext(context)
         guard decision.isDetectionActive else {
-            return RecognitionUpdate(gate: decision, observation: nil, result: result(image, status: .disabled))
+            return RecognitionUpdate(gate: decision, observation: nil, result: result(image, status: .disabled),
+                                     modeNotice: sessionNotice)
         }
-        guard !busy else { return RecognitionUpdate(gate: decision, observation: nil, result: nil) }
+        guard !busy else { return RecognitionUpdate(gate: decision, observation: nil, result: nil, modeNotice: sessionNotice) }
         busy = true
         defer { busy = false }
         let revision = generation
@@ -105,25 +120,31 @@ public actor RecognitionCoordinator {
         catch { resetEvidence(); throw error }
         let currentState = await gate.currentState
         guard currentState == .active, revision == generation, !stopped else {
-            return RecognitionUpdate(gate: await gate.lastDecision ?? decision, observation: nil, result: nil)
+            return RecognitionUpdate(gate: await gate.lastDecision ?? decision, observation: nil, result: nil,
+                                     modeNotice: sessionNotice)
         }
         guard case .processed(let evidence) = outcome else {
-            return RecognitionUpdate(gate: decision, observation: nil, result: nil)
+            return RecognitionUpdate(gate: decision, observation: nil, result: nil, modeNotice: sessionNotice)
         }
         if case .visual(let visual) = evidence {
             let side = await gate.loadedRule?.side
             guard revision == generation, !stopped else {
-                return RecognitionUpdate(gate: decision, observation: nil, result: nil)
+                return RecognitionUpdate(gate: decision, observation: nil, result: nil, modeNotice: sessionNotice)
             }
             do {
                 return try matchVisual(visual, image: image, expectedRegion: crop ?? CGRect(origin: .zero, size: image.imageResolution),
                                        decision: decision, side: side)
             } catch { resetEvidence(); throw error }
         }
-        guard case .text(let observation) = evidence, let observation else {
+        guard case .text(let observation, let guidance) = evidence else {
+            return RecognitionUpdate(gate: decision, observation: nil, result: nil, modeNotice: sessionNotice)
+        }
+        guard let observation else {
             _ = confirmation.observe(targetID: targetID, timestamp: image.timestamp, accepted: false)
             let confidence = smoother.add(0, at: image.timestamp)
-            return RecognitionUpdate(gate: decision, observation: nil, result: result(image, status: .noMatch, matchConfidence: confidence))
+            return RecognitionUpdate(gate: decision, observation: nil,
+                                     result: result(image, status: .noMatch, matchConfidence: confidence),
+                                     guidance: guidance, modeNotice: .ocrOnly)
         }
         let matches = matcher.match(observation, against: candidates)
         let target = matches.first { $0.itemID == targetID }
@@ -140,7 +161,8 @@ public actor RecognitionCoordinator {
         return RecognitionUpdate(gate: decision, observation: observation,
             result: ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID,
                 matchedItemID: confirmed ? targetID : nil, normalizedObservedText: terms, score: score, status: status,
-                matchConfidence: confidence))
+                matchConfidence: confidence),
+            guidance: guidance, modeNotice: .ocrOnly)
     }
 
     private func result(_ image: RecognitionImage, status: ItemRecognitionResult.Status,
@@ -174,7 +196,8 @@ public actor RecognitionCoordinator {
                 matchedItemID: confirmed ? targetID : nil, normalizedObservedText: [], score: match.score,
                 status: status, matchConfidence: confidence, evidenceSource: .visual, visualEvidence: observation,
                 visualMatchReason: match.reason),
-            side: side)
+            side: side,
+            modeNotice: observation.kind == .cloudSuggestion ? .cloudAssist : .appleVision)
     }
 }
 

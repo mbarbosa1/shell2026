@@ -60,10 +60,10 @@ private actor FakeRegionDetector: LabelRegionDetecting {
     private var blocked = false
     private var waiter: CheckedContinuation<Void, Never>?
 
-    func detectRegion(in image: RecognitionImage) async throws -> CGRect? {
+    func detectRegion(in image: RecognitionImage) async throws -> LabelRegionDetection {
         callCount += 1
         if blocked { await withCheckedContinuation { waiter = $0 } }
-        return region
+        return LabelRegionDetection(crop: region)
     }
 
     func setRegion(_ region: CGRect?) { self.region = region }
