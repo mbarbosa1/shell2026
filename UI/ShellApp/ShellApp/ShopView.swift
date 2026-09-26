@@ -54,10 +54,11 @@ struct ShopView: View {
                 .animation(.default, value: model.items)
 
                 VStack(spacing: 10) {
-                    Button(model.isListening ? "Pause listening" : "Resume listening") {
+                    Button(listeningButtonTitle) {
                         Task { await model.setListening(!model.isListening) }
                     }
                     .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.isConnectingVoice)
 
                     if !model.cart.isEmpty {
                         Button("Finish trip") { model.finishList() }
@@ -77,6 +78,13 @@ struct ShopView: View {
         }
         .scrollIndicators(.hidden)
         .foregroundStyle(Theme.textPrimary)
+    }
+
+    /// Voice only connects once the user turns listening on, so the first tap starts it.
+    private var listeningButtonTitle: String {
+        if model.isConnectingVoice { return "Connecting…" }
+        if model.isListening { return "Pause listening" }
+        return model.isVoiceConnected ? "Resume listening" : "Start listening"
     }
 }
 

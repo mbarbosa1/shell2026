@@ -23,10 +23,14 @@ final class AppModel {
         items.filter(\.isCollected).sorted { ($0.collectedAt ?? .distantPast) < ($1.collectedAt ?? .distantPast) }
     }
     /// The newest cart item, highlighted as "Just added".
-    var justAddedCartID: GroceryItem.ID? { cart.last?.id }
+    var justAddedCartID: UUID? { cart.last?.id }
 
     /// True while the voice agent is connected and the microphone is unmuted.
     var isListening = false
+    /// True once the user has turned listening on and the agent is connected (muted or not).
+    var isVoiceConnected = false
+    /// True while the first connection is being made, so the listening button can't start a second one.
+    var isConnectingVoice = false
     var isDeviceConnected = true
     /// The last thing the user said to the voice agent.
     var transcript: String?
@@ -35,7 +39,7 @@ final class AppModel {
     /// Why the voice agent couldn't connect (or the list couldn't be saved), shown under the listening header.
     var voiceError: String?
     /// The most recently added item gets an outline.
-    var highlightedItemID: GroceryItem.ID?
+    var highlightedItemID: UUID?
     var isCameraOpen = false
 
     @ObservationIgnored private let container: ModelContainer
@@ -50,7 +54,7 @@ final class AppModel {
         voice = VoiceAgent(model: self)
     }
 
-    func toggleCollected(_ id: GroceryItem.ID) {
+    func toggleCollected(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
         setCollected(item, !item.isCollected, source: .app)
     }
@@ -60,21 +64,27 @@ final class AppModel {
     }
 
     func addUsualsToList(source: ListEvent.Source = .app) {
+        var added: [GroceryItem] = []
         for usual in usuals where !isOnList(usual) {
-            insert(GroceryItem(name: usual.name, brand: usual.brand, label: usual.label, size: usual.size), source: source)
+            let item = GroceryItem(
+                name: usual.name, brand: usual.brand, label: usual.label, size: usual.size,
+                aisle: usual.aisle, block: usual.block
+            )
+            insert(item, source: source)
+            added.append(item)
         }
         save()
+        guard let last = added.last else { return }
+        highlightedItemID = last.id
+        confirmation = added.count == 1 ? "\(last.name) added to your list" : "\(added.count) usuals added to your list"
     }
 
     // MARK: Voice agent
 
-    func startVoice() async {
-        await voice?.start()
-    }
-
     func setListening(_ isListening: Bool) async {
         await voice?.setListening(isListening)
     }
+
     //as the voice agent hears items to add, we need to add them to the databse
     //along with adding items to the database we need to update status
     func addItem(_ item: GroceryItem, source: ListEvent.Source = .app) {
@@ -101,6 +111,30 @@ final class AppModel {
         guard let item = item(named: name) else { return false }
         setCollected(item, true, source: source)
         confirmation = "\(item.name) checked off"
+        return true
+    }
+
+    /// Changes the fields that are given and leaves the rest. Returns false if no item has that name.
+    func updateItem(
+        named name: String, quantity: Int? = nil, brand: String? = nil, label: String? = nil, size: String? = nil,
+        aisle: Int? = nil, block: String? = nil, isCollected: Bool? = nil, source: ListEvent.Source = .app
+    ) -> Bool {
+        guard let item = item(named: name) else { return false }
+        if quantity != nil || brand != nil || label != nil || size != nil || aisle != nil || block != nil {
+            if let quantity { item.quantity = quantity }
+            if let brand { item.brand = brand }
+            if let label { item.label = label }
+            if let size { item.size = size }
+            if let aisle { item.aisle = aisle }
+            if let block { item.block = block.uppercased() }
+            log(.updated, item.name, source: source)
+            save()
+        }
+        if let isCollected, isCollected != item.isCollected {
+            setCollected(item, isCollected, source: source)
+        }
+        highlightedItemID = item.id
+        confirmation = "\(item.name) updated"
         return true
     }
 
@@ -168,14 +202,27 @@ final class AppModel {
 
     // MARK: Database
 
+    #if DEBUG
+    /// Every list and item as saved, read back from the database. Printed after each voice tool call.
+    var databaseSnapshot: String {
+        let lists = (try? context.fetch(FetchDescriptor<GroceryList>(sortBy: [SortDescriptor(\.number)]))) ?? []
+        let rows = lists.map { list in
+            let items = list.sortedItems.map { item in
+                "   • \(item.name) | quantity \(item.quantity) | label \(item.label ?? "nil") | brand \(item.brand ?? "nil")"
+                    + " | aisle \(item.aisle.map(String.init) ?? "nil") | block \(item.block ?? "nil") | in cart \(item.isCollected)"
+            }
+            let header = "🗄️ List \(list.number) (\(list.isOpen ? "open" : "finished"), \(list.history.count) history events)"
+            return ([header] + (items.isEmpty ? ["   (no items)"] : items)).joined(separator: "\n")
+        }
+        return rows.joined(separator: "\n")
+    }
+    #endif
     //as soon as you finish the user session it doesnt import into the database
-    
 
     private func insert(_ item: GroceryItem, source: ListEvent.Source) {
         currentList.items.append(item)
         log(.added, item.name, source: source)
     }
-    
 
     private func setCollected(_ item: GroceryItem, _ isCollected: Bool, source: ListEvent.Source) {
         item.isCollected = isCollected
@@ -230,14 +277,16 @@ final class AppModel {
     }
 
     /// Groups items by name and brand and ranks them by how many lists they've been on,
-    /// then by how recently they were added. Uses the newest copy's label and size.
+    /// then by how recently they were added. Uses the newest copy's label and size, and the
+    /// newest known location, so adding an item without one doesn't forget where it was.
     private static func rank(_ items: [GroceryItem]) -> [CommonItem] {
-        var groups: [String: (newest: GroceryItem, lists: Set<Int>)] = [:]
+        var groups: [String: (newest: GroceryItem, located: GroceryItem?, lists: Set<Int>)] = [:]
         for item in items {
             guard let number = item.list?.number else { continue }
             let key = CommonItem.key(name: item.name, brand: item.brand)
-            var group = groups[key] ?? (item, [])
+            var group = groups[key] ?? (item, nil, [])
             if item.addedAt > group.newest.addedAt { group.newest = item }
+            if item.location != nil, item.addedAt > (group.located?.addedAt ?? .distantPast) { group.located = item }
             group.lists.insert(number)
             groups[key] = group
         }
@@ -246,6 +295,7 @@ final class AppModel {
                 CommonItem(
                     id: key, name: group.newest.name, brand: group.newest.brand,
                     label: group.newest.label, size: group.newest.size,
+                    aisle: group.located?.aisle, block: group.located?.block,
                     timesListed: group.lists.count, lastAdded: group.newest.addedAt
                 )
             }
@@ -269,9 +319,9 @@ extension AppModel {
             if trip.store != nil { list.completedAt = date }
             context.insert(list)
             list.items = [
-                GroceryItem(name: "Bananas", label: "Fresh produce", quantity: 3, addedAt: date),
-                GroceryItem(name: "Rolled oats", brand: "Quaker", label: "Old Fashioned", size: "18 oz", addedAt: date.addingTimeInterval(1)),
-                GroceryItem(name: "Oat milk", brand: "Oatly", label: "Original", size: "64 fl oz", addedAt: date.addingTimeInterval(2)),
+                GroceryItem(name: "Bananas", label: "Fresh produce", quantity: 3, aisle: 1, block: "A", addedAt: date),
+                GroceryItem(name: "Rolled oats", brand: "Quaker", label: "Old Fashioned", size: "18 oz", aisle: 26, block: "F", addedAt: date.addingTimeInterval(1)),
+                GroceryItem(name: "Oat milk", brand: "Oatly", label: "Original", size: "64 fl oz", aisle: 44, block: "G", addedAt: date.addingTimeInterval(2)),
             ]
             list.history = list.items.map { ListEvent(kind: .added, itemName: $0.name, source: .voice, date: $0.addedAt) }
         }

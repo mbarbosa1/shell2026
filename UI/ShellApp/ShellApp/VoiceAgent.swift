@@ -19,8 +19,13 @@ final class VoiceAgent {
         self.model = model
     }
 
+    /// Connects to the agent. Called when the user first turns listening on, never at launch.
     func start() async {
-        guard conversation == nil else { return }
+        // A second tap while connecting would otherwise open a second conversation.
+        guard conversation == nil, !model.isConnectingVoice else { return }
+        model.isConnectingVoice = true
+        defer { model.isConnectingVoice = false }
+
         guard let agentID = VoiceConfig.agentID else {
             model.voiceError = "Voice is off: set ELEVENLABS_AGENT_ID in the scheme's environment variables."
             return
@@ -52,6 +57,7 @@ final class VoiceAgent {
         do {
             let conversation = try await ElevenLabs.startConversation(auth: auth(agentID: agentID), config: config)
             self.conversation = conversation
+            model.isVoiceConnected = true
             conversation.$isMuted
                 .sink { [weak self] isMuted in self?.model.isListening = !isMuted }
                 .store(in: &subscriptions)
@@ -82,6 +88,7 @@ final class VoiceAgent {
         conversation = nil
         subscriptions.removeAll()
         model.isListening = false
+        model.isVoiceConnected = false
     }
 
     // MARK: Authentication
@@ -156,7 +163,7 @@ final class VoiceAgent {
     /// - `get_list_history`: `number` (integer, optional; the open list if left out)
     /// - `finish_list`: `store` (optional), e.g. "Publix"
     private func run(_ tool: String, parameters: [String: Any]) -> (message: String, isError: Bool) {
-        let name = (parameters["name"] ?? parameters["item_name"]) as? String
+        let name = Self.text(parameters["name"] ?? parameters["item_name"])
 
         switch tool {
         case "get_grocery_list", "get_list":
@@ -167,12 +174,12 @@ final class VoiceAgent {
             guard let name else { return ("Missing parameter: name.", true) }
             model.addItem(GroceryItem(
                 name: name,
-                brand: parameters["brand"] as? String,
-                label: parameters["label"] as? String,
-                size: parameters["size"] as? String,
+                brand: Self.text(parameters["brand"]),
+                label: Self.text(parameters["label"]),
+                size: Self.text(parameters["size"]),
                 quantity: Self.int(parameters["quantity"]) ?? 1,
                 aisle: Self.int(parameters["aisle"]),
-                block: (parameters["block"] as? String)?.uppercased()
+                block: Self.text(parameters["block"])?.uppercased()
             ), source: .voice)
             return ("Added \(name) to list \(model.currentList.number).", false)
 
@@ -232,7 +239,7 @@ final class VoiceAgent {
             return (model.historySummary(of: list), false)
 
         case "finish_list":
-            let finished = model.finishList(at: parameters["store"] as? String, source: .voice)
+            let finished = model.finishList(at: Self.text(parameters["store"]), source: .voice)
             return ("Saved list \(finished.number) to History and started list \(model.currentList.number).", false)
 
         case "open_camera_or_close":
@@ -273,9 +280,9 @@ final class VoiceAgent {
         "There's no list \(Self.int(value).map(String.init) ?? "with that number")."
     }
 
-    /// Non-empty text, or nil.
+    /// Trimmed text, or nil when it's missing or blank, so empty values are saved as NULL.
     private static func text(_ value: Any?) -> String? {
-        guard let text = (value as? String)?.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return nil }
+        guard let text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         return text
     }
 
