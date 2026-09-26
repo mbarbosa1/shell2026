@@ -1,9 +1,6 @@
 import Foundation
 
-/// Immutable snapshot of one catalog record the database branch has stored.
-///
-/// Matching against these snapshots is a later slice. The type exists here so
-/// `CatalogReading` matches the agreed protocol shape.
+/// Immutable snapshot of one catalog record the database branch has stored
 public struct CatalogItemSnapshot: Sendable, Hashable {
     public let id: UUID
     public let catalogKey: String
@@ -26,17 +23,10 @@ public struct CatalogItemSnapshot: Sendable, Hashable {
     }
 }
 
-/// Read-only access to the records the database branch persists.
-///
-/// The database branch supplies the concrete adapter (it may use
-/// `@ModelActor` internally). Recognition code depends only on this protocol
-/// and the immutable snapshots it returns. Nothing in this package touches a
-/// `ModelContext`.
+/// Read-only access to the records the database branch persists
 public protocol CatalogReading: Sendable {
     /// Catalog records the matcher should compare against for the given target.
     func catalogCandidates(for targetItemID: UUID) async throws -> [CatalogItemSnapshot]
-
-    /// The persisted activation rule for the given target, or `nil` when the
-    /// database branch has not registered one. `nil` keeps detection off.
+    /// The persisted activation rule for the given target
     func activationRule(for targetItemID: UUID) async throws -> DetectionActivationRuleSnapshot?
 }

@@ -1,5 +1,53 @@
 # Persistent Project Memory — Item Detection, OCR, and SwiftData Matching
 
+## Implementation status — verified September 26, 2026
+
+This checklist records the current local implementation. Checked items are complete within the scope stated. The architecture and examples below also describe planned work; they are not evidence that the entire recognition pipeline is complete.
+
+### Complete
+
+- [x] Create the native Swift `ItemRecognition` library package with iOS 17+ and macOS 14+ support and an XCTest target.
+- [x] Define immutable catalog snapshots and the `CatalogReading` protocol for activation rules and candidate records. The concrete SwiftData adapter remains an external integration dependency.
+- [x] Implement `ActivationGate` using supplied target, landmark, progress, reliability, and external-pause context.
+- [x] Implement waiting, armed, active, suspended, threshold-passed, and item-not-in-store decisions with typed inactive reasons.
+- [x] Activate within the inclusive distance window: `activateAfterMeters <= progress <= deactivateAfterMeters`. Progress strictly greater than the end threshold turns detection off.
+- [x] Load and cache activation rules through `CatalogReading`, reset on target changes, and retry loading when a rule is missing.
+- [x] Emit `clearTemporalCandidates` when appropriate. Applying that signal to a future temporal matcher remains pending.
+- [x] Define `RecognitionImage` with a supplied pixel buffer, timestamp, resolution, orientation, and documented buffer ownership requirements. No camera session is created here.
+- [x] Validate declared image dimensions and caller-supplied crop bounds before gate evaluation.
+- [x] Convert a supplied pixel crop to a normalized Vision region of interest.
+- [x] Implement `VisionTextRecognizer` with `VNRecognizeTextRequest`, accurate recognition, `en-US`, language correction, and explicit image orientation. Real-image recognition accuracy remains unverified.
+- [x] Implement deterministic text normalization and word/adjacent-word tokenization, including case, whitespace, punctuation, Unicode normalization, and unit formatting.
+- [x] Implement `TextExtractionScheduler`: default stride of five active frames, configurable within 5–10, one in-flight request, and one replaceable pending eligible frame.
+- [x] Suppress new OCR work while inactive and discard an in-flight observation if the gate is inactive or its target differs at completion.
+- [x] Return `ProductTextObservation` with raw and normalized text, confidence, bounding boxes, timestamp, target identifier, and optional shelf side.
+- [x] Verify the existing package tests with `swift test --package-path ItemRecognition`: **54 tests passed, zero failures** on macOS using Xcode 27.0. Coverage comprises 20 activation-gate tests, 15 extraction-scheduler tests, 13 normalization tests, and 6 region-of-interest tests.
+
+The scheduler tests use `FakeRecognizer` and in-memory catalog stand-ins. Their passing results verify the tested control flow and transformations, not real Vision OCR accuracy, real SwiftData integration, or end-to-end product identification. Some implementation files are currently untracked local files; this checklist describes the working tree rather than a committed release.
+
+### Pending — required to complete product recognition
+
+- [ ] Add representative product-image fixtures and integration tests that invoke the real `VisionTextRecognizer`, including orientation, glare, blur, partial labels, and no-text images.
+- [ ] Implement automatic product/package/label-region detection when upstream does not provide a crop, with validated image-coordinate mapping.
+- [ ] Integrate the database owner's concrete SwiftData `CatalogReading` adapter and preload the relevant catalog candidate snapshots.
+- [ ] Implement catalog matching and scoring for brand, product family, variant, and size, including conflict rejection and matching tests.
+- [ ] Implement temporal confirmation, candidate expiration, and consumption of the gate's candidate-clearing signal.
+- [ ] Implement `RecognitionCoordinator`, `ItemRecognitionResult`, and `ItemObservation`, including target completion and stale-result handling.
+- [ ] Integrate a runnable host iOS app with the upstream camera and localization inputs and a development view of recognition state and results.
+- [ ] Connect optional result recording through the database owner's adapter if persistence is required.
+- [ ] Run end-to-end tests on the intended iPhone and record accuracy, wrong-variant acceptance, latency, memory, thermal behavior, and agreed acceptance thresholds.
+
+### Test the completed work in Xcode
+
+1. Open `ItemRecognition/Package.swift` in Xcode.
+2. Select the `ItemRecognition` package scheme and **My Mac** destination to reproduce the verified platform.
+3. Choose **Product > Test** (`Command-U`). Review all four suites in the Test navigator; the current suite contains 54 tests.
+4. Run individual `ActivationGateTests` with a breakpoint in `ActivationGate.evaluate` to inspect the state and inactive reason. The fixture uses `aisle_25_top` and an inclusive 3–20 metre window.
+5. Run `testFirstFourFramesSkipAndFifthRunsOCR` in `TextExtractionSchedulerTests` and inspect the unwrapped observation. The fake recognizer supplies `Honey Nut CHEERIOS` and `12 OZ`, which normalize to `honey nut cheerios` and `12oz`.
+6. Run `testPauseDiscardsPendingFrameAndInFlightResult` and `testResumeAfterPauseRequiresFreshStride` to inspect pause/resume behavior.
+
+This package has no runnable camera application. Live product testing requires the pending host-app integration, and identifying a catalog item additionally requires matching and temporal confirmation.
+
 ## Purpose
 
 This document is the durable architectural memory for implementing grocery-item text recognition and SwiftData catalog matching in the Target-Navigation iOS application. Future design and implementation work should preserve the decisions below unless the user explicitly changes them.
@@ -540,5 +588,4 @@ The database owner decides how these activation fields are represented in SwiftD
 9. Results leave this feature as `ItemRecognitionResult`; database, navigation, presentation, and sensor layers decide what to do next.
 10. SwiftData access is isolated behind `CatalogReading` and the optional `RecognitionResultRecording` protocol; no per-frame images, boxes, or OCR candidates are persisted by default.
 11. Xcode, Swift, Swift concurrency, SwiftData, Vision, Core ML, Core Video, Core Graphics/ImageIO, Foundation, XCTest, and Instruments are the explicit tools for this work.
-
 

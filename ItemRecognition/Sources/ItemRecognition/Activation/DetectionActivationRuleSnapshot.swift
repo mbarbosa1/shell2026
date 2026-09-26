@@ -7,8 +7,6 @@ public struct DetectionActivationRuleSnapshot: Sendable, Hashable {
     public let activateAfterMeters: Double
     public let deactivateAfterMeters: Double
     public let side: ShelfSide?
-    /// Whether this store carries the target item. The gate reads this boolean
-    /// in `ActivationGate.isItemInStore(_:)`. `false` keeps detection off.
     public let isInStore: Bool
 
     public init(
