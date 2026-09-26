@@ -30,6 +30,7 @@ The app uses only Apple frameworks:
 |---|---|
 | SwiftUI | All screens |
 | Observation | `AppModel` state (`@Observable`) |
+| SwiftData | Grocery list database: numbered lists, their items and history (`Models.swift`) |
 | AVFoundation | Rear camera preview |
 | Foundation | Models, dates |
 

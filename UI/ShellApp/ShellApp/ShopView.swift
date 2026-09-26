@@ -33,7 +33,7 @@ struct ShopView: View {
                         .font(.title2.weight(.semibold))
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Text(model.items.count == 1 ? "1 item" : "\(model.items.count) items")
+                    Text("List \(model.currentList.number) · " + (model.items.count == 1 ? "1 item" : "\(model.items.count) items"))
                         .font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -58,6 +58,12 @@ struct ShopView: View {
                         Task { await model.setListening(!model.isListening) }
                     }
                     .buttonStyle(SecondaryButtonStyle())
+
+                    if !model.cart.isEmpty {
+                        Button("Finish trip") { model.finishList() }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .accessibilityHint("Saves this list to History and starts a new one")
+                    }
 
                     Button("Start shopping") { model.isCameraOpen = true }
                         .buttonStyle(PrimaryButtonStyle())
@@ -132,8 +138,8 @@ struct TranscriptCard: View {
     }
 }
 
-struct GroceryRow: View {
-    let item: GroceryItem
+struct GroceryRow<Item: ItemDescribing>: View {
+    let item: Item
     var isChecked: Bool
     var isHighlighted = false
     var action: (() -> Void)?

@@ -77,8 +77,13 @@ struct CartPanel: View {
 }
 
 private struct CartRow: View {
-    let item: CartItem
+    let item: GroceryItem
     let isJustAdded: Bool
+
+    /// "Quaker · Rolled oats"
+    private var title: String {
+        [item.brand, item.name].compactMap { $0 }.joined(separator: " · ")
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -87,11 +92,11 @@ private struct CartRow: View {
                     .fill(Theme.success)
                     .frame(width: 6, height: 6)
             }
-            Text(item.title)
+            Text(title)
                 .font(.subheadline)
                 .lineLimit(1)
             Spacer(minLength: 8)
-            Text(isJustAdded ? "Just added · \(item.quantity)" : item.quantity)
+            Text(isJustAdded ? "Just added · \(item.quantity)" : "\(item.quantity)")
                 .font(isJustAdded ? .caption : .subheadline)
                 .foregroundStyle(isJustAdded ? Theme.success : Theme.textSecondary)
         }
@@ -104,5 +109,5 @@ private struct CartRow: View {
 
 #Preview {
     CameraScreen()
-        .environment(AppModel())
+        .environment(AppModel.preview)
 }

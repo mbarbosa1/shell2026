@@ -34,7 +34,7 @@ struct HistoryView: View {
             .foregroundStyle(Theme.textPrimary)
             .background(Theme.background.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: Trip.self) { trip in
+            .navigationDestination(for: GroceryList.self) { trip in
                 TripDetailView(trip: trip)
             }
         }
@@ -51,11 +51,17 @@ struct HistoryView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
 
-            ForEach(model.usuals) { usual in
-                GroceryRow(item: usual, isChecked: model.isOnList(usual))
+            if model.usuals.isEmpty {
+                Text("Items you add to two or more lists show up here.")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+            } else {
+                ForEach(model.usuals) { usual in
+                    GroceryRow(item: usual, isChecked: model.isOnList(usual))
+                }
+                Button("Add usuals to my list") { model.addUsualsToList() }
+                    .buttonStyle(SecondaryButtonStyle())
             }
-            Button("Add usuals to my list") { model.addUsualsToList() }
-                .buttonStyle(SecondaryButtonStyle())
         }
     }
 
@@ -64,6 +70,12 @@ struct HistoryView: View {
             Text("Recent trips")
                 .font(.title2.weight(.semibold))
                 .accessibilityAddTraits(.isHeader)
+
+            if model.trips.isEmpty {
+                Text("Finished lists show up here. Say “I’m done shopping.”")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+            }
 
             ForEach(model.trips) { trip in
                 NavigationLink(value: trip) {
@@ -90,7 +102,7 @@ struct HistoryView: View {
 }
 
 struct TripDetailView: View {
-    let trip: Trip
+    let trip: GroceryList
 
     var body: some View {
         ScrollView {
@@ -98,8 +110,29 @@ struct TripDetailView: View {
                 Text(trip.summary)
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
-                ForEach(trip.items) { item in
+                ForEach(trip.sortedItems) { item in
                     GroceryRow(item: item, isChecked: item.isCollected)
+                }
+
+                if !trip.history.isEmpty {
+                    Text("History")
+                        .font(.title2.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                        .padding(.top, 16)
+                    ForEach(trip.sortedHistory) { event in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(event.text)
+                            Spacer()
+                            if event.source == .voice {
+                                Image(systemName: "waveform")
+                                    .accessibilityLabel("By voice")
+                            }
+                            Text(event.date, format: .dateTime.hour().minute())
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityElement(children: .combine)
+                    }
                 }
             }
             .padding(16)
