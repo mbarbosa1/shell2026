@@ -22,6 +22,30 @@ struct CameraDemoView: View {
             CameraPreview(session: model.capture.session)
                 .frame(height: model.configuration.usesDatabase ? 160 : 260)
                 .background(Color.black)
+            // Which recognizer is working right now. Cloud assist is a heavier
+            // model than OCR or Apple Vision, so the user is told when it runs.
+            Text(model.modeMessage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(model.modeIsCloud ? Color.orange : Color.secondary)
+                .accessibilityLabel("Recognition mode: \(model.modeMessage)")
+            if let guidance = model.guidanceMessage {
+                Text(guidance)
+                    .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.15))
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+            if model.awaitingVerdict {
+                InsightVerdict(insight: model.insight, mode: model.modeMessage,
+                               confirm: { model.confirmInsight() }, negate: { model.negateInsight() })
+            }
+            if model.showsOCRExtraction {
+                OCRExtractionCard(candidates: model.candidates,
+                                  ocrConfidencePercent: model.ocrConfidencePercent,
+                                  matchConfidencePercent: model.configuration.usesDatabase
+                                    ? model.matchConfidencePercent : nil)
+            }
             if model.configuration.usesDatabase {
                 Text("Manual test progress — not live localization").font(.caption)
                 HStack {
@@ -58,16 +82,19 @@ struct CameraDemoView: View {
                         ForEach(model.visualPredictions, id: \.identifier) { prediction in
                             Text("\(prediction.identifier) = \(Int(prediction.score * 100))%")
                         }
-                    } else if model.candidates.isEmpty {
-                        Text("No extracted text.").foregroundStyle(.secondary)
                     }
-                    ForEach(Array(model.candidates.enumerated()), id: \.offset) { _, candidate in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(candidate.rawText)
-                            Text(candidate.normalizedText).font(.caption)
-                            Text("OCR confidence: \(Int(candidate.confidence * 100))%")
-                                .font(.caption).foregroundStyle(.secondary)
+                    if !model.candidates.isEmpty {
+                        Text("All extracted lines").font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(model.candidates.enumerated()), id: \.offset) { _, candidate in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(candidate.rawText)
+                                Text(candidate.normalizedText).font(.caption)
+                                Text("OCR confidence: \(Int((candidate.confidence * 100).rounded()))%")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
+                    } else if model.showsOCRExtraction {
+                        Text("No extracted text.").foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -96,15 +123,33 @@ final class CameraDemoModel: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var permissionDenied = false
     @Published private(set) var candidates: [RecognizedTextCandidate] = []
+    /// Mean of the latest OCR line confidences, 0…100. Nil until OCR has produced a frame.
+    @Published private(set) var ocrConfidencePercent: Int?
+    /// Latest `ItemRecognitionResult.matchConfidence`, 0…100, when a result exists.
+    @Published private(set) var matchConfidencePercent: Int?
     @Published private(set) var visualPredictions: [VisualClassification] = []
     @Published private(set) var visualStatus = "Waiting for visual evidence."
+    /// OCR path, or leftover OCR lines if a visual session somehow has them.
+    var showsOCRExtraction: Bool { configuration.visual == nil || !candidates.isEmpty }
+    /// Plain-language direction from the latest processed frame, or nil when
+    /// the item is framed well enough. Never coordinates.
+    @Published private(set) var guidanceMessage: String?
+    /// Which recognizer produced the latest update: OCR, Apple Vision, or Gemini.
+    @Published private(set) var modeMessage: String
+    @Published private(set) var modeIsCloud = false
+    @Published private(set) var awaitingVerdict = false
+    @Published private(set) var insight = ""
     private var lastConsoleMessage: String?
+    private var lastGuidanceLogged: RecognitionGuidance?
+    private var lastModeLogged: RecognitionModeNotice?
+    private var lastOCRLogged: String?
     private var visualClassifier: (any VisualClassifying)?
 
     init(configuration: DemoScanConfiguration) {
         self.configuration = configuration
         landmark = configuration.rule?.landmarkID ?? ""
         meters = configuration.usesDatabase ? "0" : "5"
+        modeMessage = (configuration.visual == nil ? RecognitionModeNotice.ocrOnly : .appleVision).message
     }
 
     lazy var capture = DemoCameraCapture { [weak self] event in
@@ -130,18 +175,31 @@ final class CameraDemoModel: ObservableObject {
             return
         }
         candidates = []
+        ocrConfidencePercent = nil
+        matchConfidencePercent = nil
         visualPredictions = []
         visualStatus = "Waiting for visual evidence."
         matchStatus = ""
+        guidanceMessage = nil
+        modeIsCloud = false
+        modeMessage = (configuration.visual == nil ? RecognitionModeNotice.ocrOnly : .appleVision).message
         lastConsoleMessage = nil
+        lastGuidanceLogged = nil
+        lastModeLogged = nil
+        lastOCRLogged = nil
         status = "Starting rear camera…"
         do {
             if let visual = configuration.visual, visualClassifier == nil {
                 visualClassifier = try DemoCloudAssist.visualClassifier(for: visual)
             }
             let visualPolicy = configuration.visual.map(DemoCloudAssist.visualPolicy(for:)) ?? VisualRecognitionPolicy()
+            let fallback: (any VisualClassifying)? = configuration.visual == nil
+                ? try ProduceCategoryClassifier(base: VisionImageClassifier(), cloud: DemoCloudAssist.labeler(),
+                    cloudPolicy: CloudAssistPolicy(localScoreBelow: VisualRecognitionPolicy.appleVisionProduce.minimumScore))
+                : nil
             let coordinator = try await RecognitionCoordinator(targetID: configuration.targetID,
-                catalog: configuration.catalog, visualClassifier: visualClassifier, visualPolicy: visualPolicy)
+                catalog: configuration.catalog, visualClassifier: visualClassifier, visualPolicy: visualPolicy,
+                ocrFallback: fallback)
             guard isRunning else { await coordinator.stop(); return }
             let context = RecognitionContext(targetItemID: configuration.targetID,
                 landmarkProgress: LandmarkProgressObservation(timestamp: 0,
@@ -149,6 +207,21 @@ final class CameraDemoModel: ObservableObject {
                 externalPause: paused)
             capture.start(coordinator: coordinator, context: context)
         } catch { isRunning = false; status = error.localizedDescription }
+    }
+
+    func confirmInsight() {
+        let accepted = insight
+        capture.acceptInsight()
+        awaitingVerdict = false
+        stop()
+        status = "You confirmed \(accepted)."
+    }
+
+    func negateInsight() {
+        capture.rejectInsight()
+        awaitingVerdict = false
+        insight = ""
+        status = "Not that. Looking again."
     }
 
     func stop() {
@@ -175,13 +248,57 @@ final class CameraDemoModel: ObservableObject {
         return lines.sorted { $0.score > $1.score }
     }
 
+    /// Keep the last OCR lines across skipped frames so the text does not flicker
+    /// four times out of five. A processed observation, even with no lines, replaces it.
+    private func applyExtraction(_ update: RecognitionUpdate) {
+        if let observation = update.observation {
+            candidates = observation.candidates
+            if observation.candidates.isEmpty {
+                ocrConfidencePercent = nil
+            } else {
+                let mean = observation.candidates.map(\.confidence).reduce(0, +)
+                    / Float(observation.candidates.count)
+                ocrConfidencePercent = Int((mean * 100).rounded())
+            }
+            let text = observation.candidates.map(\.rawText).joined(separator: " | ")
+            let confidence = ocrConfidencePercent.map { "\($0)%" } ?? "none"
+            let signature = "\(text)|\(confidence)"
+            if signature != lastOCRLogged {
+                print("[ItemRecognition] OCR: \(text.isEmpty ? "No text extracted" : text) | confidence \(confidence)")
+                lastOCRLogged = signature
+            }
+        }
+        if let result = update.result {
+            matchConfidencePercent = Int((result.matchConfidence * 100).rounded())
+        }
+    }
+
+    /// Mode is shown on every update. Guidance follows the latest processed frame:
+    /// a frame with no advice clears the banner. Both are logged when they change.
+    private func applyNotices(_ update: RecognitionUpdate) {
+        modeMessage = update.modeNotice.message
+        modeIsCloud = update.modeNotice == .cloudAssist
+        if update.modeNotice != lastModeLogged {
+            print("[ItemRecognition] Mode: \(update.modeNotice.message)")
+            lastModeLogged = update.modeNotice
+        }
+        // Skipped or discarded frames carry no result; keep the last advice until a processed frame replaces it.
+        guard update.result != nil, update.gate.isDetectionActive else { return }
+        guidanceMessage = update.guidance?.message
+        if update.guidance != lastGuidanceLogged {
+            if let guidance = update.guidance { print("[ItemRecognition] Guidance: \(guidance.message)") }
+            lastGuidanceLogged = update.guidance
+        }
+    }
+
     private func receive(_ event: DemoCameraCapture.Event) {
         guard isRunning else { return }
         switch event {
         case .started:
             status = configuration.visual == nil ? "Scanning. Point at clear, well-lit text." : "Scanning item appearance."
         case .update(let update, let milliseconds):
-            candidates = update.observation?.candidates ?? []
+            applyExtraction(update)
+            applyNotices(update)
             if update.gate.isDetectionActive {
                 status = configuration.visual == nil
                     ? "\(candidates.count) lines · \(Int(milliseconds)) ms processing"
@@ -189,8 +306,11 @@ final class CameraDemoModel: ObservableObject {
             } else {
                 status = "Gate: \(update.gate.state) · \(String(describing: update.gate.inactiveReason))"
             }
+            awaitingVerdict = update.awaitingVerdict
+            if update.awaitingVerdict { insight = update.insight ?? "" }
             if let result = update.result {
-                matchStatus = "\(result.evidenceSource.rawValue) · \(result.status.rawValue) · evidence score \(Int(result.score * 100))%"
+                let matchPercent = Int((result.matchConfidence * 100).rounded())
+                matchStatus = "\(result.evidenceSource.rawValue) · \(result.status.rawValue) · match \(matchPercent)% · evidence score \(Int(result.score * 100))%"
                 visualPredictions = displayPredictions(result.visualEvidence)
                 let mappedClass = result.visualEvidence?.classifications
                     .filter { configuration.visual?.classIDs.contains($0.identifier) == true }
@@ -228,10 +348,11 @@ final class CameraDemoModel: ObservableObject {
                 let evidence = result.evidenceSource == .visual
                     ? "Visual: \(visualPredictions.map { "\($0.identifier)=\(Int($0.score * 100))%" }.joined(separator: ", ")) | \(visualStatus)"
                     : "OCR: \(text.isEmpty ? "No text extracted" : text)"
-                let message = "[ItemRecognition] \(result.status.rawValue) | Item: \(item) | \(evidence)"
-                // Ignore score jitter when deciding whether to repeat a diagnostic.
+                let message = "[ItemRecognition] \(result.status.rawValue) | Match: \(matchPercent)% | Item: \(item) | \(evidence)"
+                // Ignore score jitter when deciding whether to repeat a diagnostic;
+                // reprint when the match confidence moves by a 10-point step.
                 let signature = result.evidenceSource == .visual
-                    ? "\(result.status.rawValue)|\(item)|\(visualPredictions.map(\.identifier))|\(visualStatus)"
+                    ? "\(result.status.rawValue)|\(matchPercent / 10)|\(item)|\(visualPredictions.map(\.identifier))|\(visualStatus)"
                     : message
                 if signature != lastConsoleMessage {
                     print(message)
@@ -245,6 +366,73 @@ final class CameraDemoModel: ObservableObject {
             visualPredictions = []
             print("[ItemRecognition] Error: \(message)")
         }
+    }
+}
+
+/// Latest OCR output and the confidence Vision assigned when it produced it.
+/// Match confidence is the catalog fit, shown only when the session is matching.
+/// The settled OCR words or the object Apple Vision / Gemini named.
+/// Scanning stays on this result until the user confirms or rejects it.
+private struct InsightVerdict: View {
+    let insight: String
+    let mode: String
+    let confirm: () -> Void
+    let negate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(mode).font(.caption).foregroundStyle(.secondary)
+            Text(insight.isEmpty ? "No name" : insight)
+                .font(.title3.weight(.semibold))
+            HStack {
+                Button("Yes, that's it", action: confirm)
+                    .buttonStyle(.borderedProminent)
+                Button("No, keep looking", action: negate)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.12))
+    }
+}
+
+private struct OCRExtractionCard: View {
+    let candidates: [RecognizedTextCandidate]
+    let ocrConfidencePercent: Int?
+    let matchConfidencePercent: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Extracted text")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                if let ocrConfidencePercent {
+                    Text("OCR \(ocrConfidencePercent)%")
+                        .font(.caption.weight(.semibold))
+                        .accessibilityLabel("OCR confidence \(ocrConfidencePercent) percent")
+                }
+                if let matchConfidencePercent {
+                    Text("Match \(matchConfidencePercent)%")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Match confidence \(matchConfidencePercent) percent")
+                }
+            }
+            if candidates.isEmpty {
+                Text("No extracted text.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(candidates.map(\.rawText).joined(separator: "\n"))
+                    .textSelection(.enabled)
+                    .accessibilityLabel("Extracted text: \(candidates.map(\.rawText).joined(separator: ", "))")
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.12))
+        .accessibilityAddTraits(.updatesFrequently)
     }
 }
 

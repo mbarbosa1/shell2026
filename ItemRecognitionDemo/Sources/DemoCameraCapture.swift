@@ -48,6 +48,20 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         }
     }
 
+    func acceptInsight() {
+        queue.async { [self] in
+            guard let coordinator else { return }
+            Task { await coordinator.acceptInsight() }
+        }
+    }
+
+    func rejectInsight() {
+        queue.async { [self] in
+            guard let coordinator else { return }
+            Task { await coordinator.rejectInsight() }
+        }
+    }
+
     func stop() {
         queue.async { [self] in
             scanning = false
