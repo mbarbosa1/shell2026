@@ -26,7 +26,9 @@ actor RecognitionFrameScheduler {
     private let recognizer: any TextRecognizing
     private let regionDetector: any LabelRegionDetecting
     private let normalizer: any TextNormalizing
-    private let visualClassifier: (any VisualClassifying)?
+    /// Nil on the OCR path. Set when the session gives up on text and adopts
+    /// image recognition for the rest of this scan.
+    private var visualClassifier: (any VisualClassifying)?
 
     /// Clamped to `strideRange` at init. Immutable, so readable without hopping to the actor.
     nonisolated let frameStride: Int
@@ -60,6 +62,15 @@ actor RecognitionFrameScheduler {
 
     /// Frames counted since the gate last became `.active`.
     var framesSinceActivation: Int { framesWhileActive }
+
+    /// Leave OCR for the rest of this scan. In-flight text work is discarded
+    /// and the frame cadence restarts so the first visual frame is a fresh look.
+    func switchToVisual(_ classifier: any VisualClassifying) {
+        visualClassifier = classifier
+        generation &+= 1
+        framesWhileActive = 0
+        discardPending()
+    }
 
     /// Invalidate queued/in-flight results and restart cadence after a context
     /// change supplied separately from camera frames.

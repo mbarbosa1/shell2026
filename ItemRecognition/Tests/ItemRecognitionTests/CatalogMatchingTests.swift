@@ -123,10 +123,60 @@ final class CatalogMatchingTests: XCTestCase {
         XCTAssertNil(update.guidance)
     }
 
+    func testThreeEmptyOCRFramesSwitchToVisionAndThenAskTheUser() async throws {
+        let vision = FallbackVision()
+        let session = try await session(detector: MatchingRegion(crop: nil, guidance: .moveCloser), ocrFallback: vision)
+        var processed: [RecognitionUpdate] = []
+        for index in 1...30 {
+            let update = try await session.submit(context(), image: image(Double(index) / 10))
+            if update.result != nil { processed.append(update) }
+        }
+        XCTAssertEqual(processed[0].modeNotice, .ocrOnly)
+        XCTAssertEqual(processed[0].guidance, .moveCloser)
+        XCTAssertEqual(processed[2].modeNotice, .ocrOnly, "the third empty frame is still OCR; it is the one that decides")
+        XCTAssertEqual(processed[3].modeNotice, .appleVision)
+        XCTAssertEqual(processed[3].result?.visualEvidence?.classifications.first?.identifier, "onion")
+        let calls = await vision.calls
+        XCTAssertGreaterThanOrEqual(calls, 1)
+        XCTAssertEqual(processed.last?.awaitingVerdict, true)
+        XCTAssertEqual(processed.last?.insight, "onion")
+        let frozen = try await session.submit(context(), image: image(4))
+        XCTAssertEqual(frozen.awaitingVerdict, true, "a settled insight does not keep scanning")
+        let frozenCalls = await vision.calls
+        XCTAssertEqual(frozenCalls, calls)
+        await session.rejectInsight()
+        let resumed = try await session.submit(context(), image: image(5))
+        XCTAssertFalse(resumed.awaitingVerdict)
+    }
+
+    func testConfirmedOCRWaitsForTheUser() async throws {
+        let recognizer = MatchingRecognizer()
+        let session = try await session(recognizer: recognizer)
+        var settled: RecognitionUpdate?
+        for index in 1...15 {
+            let update = try await session.submit(context(), image: image(Double(index) / 10))
+            if update.awaitingVerdict { settled = update }
+        }
+        let verdict = try XCTUnwrap(settled)
+        XCTAssertEqual(verdict.result?.status, .confirmed)
+        XCTAssertEqual(verdict.insight, "Acme Oat Cereal Honey 12oz")
+        let calls = await recognizer.calls
+        _ = try await session.submit(context(), image: image(1.6))
+        let held = await recognizer.calls
+        XCTAssertEqual(held, calls, "confirmation stops OCR until the user answers")
+        await session.rejectInsight()
+        for index in 16...20 {
+            _ = try await session.submit(context(), image: image(Double(index) / 10))
+        }
+        let resumed = await recognizer.calls
+        XCTAssertGreaterThan(resumed, calls)
+    }
+
     private func session(recognizer: MatchingRecognizer = MatchingRecognizer(),
-                         detector: MatchingRegion = MatchingRegion()) async throws -> RecognitionCoordinator {
+                         detector: MatchingRegion = MatchingRegion(),
+                         ocrFallback: (any VisualClassifying)? = nil) async throws -> RecognitionCoordinator {
         try await RecognitionCoordinator(targetID: targetID, catalog: MatchingCatalog(targetID: targetID, candidates: candidates),
-            recognizer: recognizer, detector: detector)
+            recognizer: recognizer, detector: detector, ocrFallback: ocrFallback)
     }
     private func context(meters: Double = 5, pause: Bool = false) -> RecognitionContext {
         RecognitionContext(targetItemID: targetID, landmarkProgress: LandmarkProgressObservation(timestamp: 0,
@@ -154,6 +204,19 @@ private struct MatchingRegion: LabelRegionDetecting {
         LabelRegionDetection(crop: crop, guidance: guidance)
     }
 }
+private actor FallbackVision: VisualClassifying {
+    private(set) var calls = 0
+    func modelInfo() -> VisualModelInfo {
+        VisualModelInfo(id: "fallback.vision", version: "1", supportedClassIDs: ["onion", "unknown"])
+    }
+    func classify(in image: RecognitionImage, crop: CGRect?) -> VisualObservation {
+        calls += 1
+        return VisualObservation(timestamp: image.timestamp, modelID: "fallback.vision", modelVersion: "1",
+            inputRegion: crop ?? CGRect(origin: .zero, size: image.imageResolution),
+            classifications: [.init(identifier: "onion", score: 0.95), .init(identifier: "unknown", score: 0.1)])
+    }
+}
+
 private actor MatchingRecognizer: TextRecognizing {
     private(set) var calls = 0
     func recognizeText(in image: RecognitionImage, regionOfInterest: CGRect?) async throws -> [RecognizedTextLine] {
