@@ -71,16 +71,14 @@ final class VoiceAgent {
         didDisconnect()
     }
 
-    /// Mutes or unmutes the microphone, connecting first if needed.
+    /// Turning listening on connects to Mira. Turning it off ends the conversation, so she stops
+    /// talking right away; muting only the microphone would let her keep speaking (and keep the
+    /// session billing). The list lives in the database, so nothing is lost between sessions.
     func setListening(_ isListening: Bool) async {
-        guard let conversation else {
-            if isListening { await start() }
-            return
-        }
-        do {
-            try await conversation.setMuted(!isListening)
-        } catch {
-            model.voiceError = error.localizedDescription
+        if isListening {
+            await start()
+        } else {
+            await stop()
         }
     }
 
