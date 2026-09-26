@@ -17,8 +17,6 @@ protocol ItemDescribing {
     var label: String? { get }
     var size: String? { get }
     var quantity: Int { get }
-    var aisle: Int? { get }
-    var block: String? { get }
 }
 
 extension ItemDescribing {
@@ -26,14 +24,8 @@ extension ItemDescribing {
     var detail: String {
         var parts: [String] = []
         if quantity > 1 { parts.append("\(quantity) \(name.lowercased())") }
-        parts += [brand, label, size, location.map { "Aisle \($0)" }].compactMap { $0 }
+        parts += [brand, label, size].compactMap { $0 }
         return parts.joined(separator: " · ")
-    }
-
-    /// Where it is in the store, e.g. "G44" (block G, aisle 44). Nil until both are known.
-    var location: String? {
-        guard let block, let aisle else { return nil }
-        return "\(block)\(aisle)"
     }
 }
 
@@ -79,27 +71,19 @@ final class GroceryItem: ItemDescribing {
     var label: String?
     var size: String?
     var quantity: Int
-    /// Store location, matching the product database's `StoreLocation`: aisle 44 in block "G".
-    var aisle: Int?
-    var block: String?
     var isCollected = false
     var addedAt: Date
     /// When the item went in the cart.
     var collectedAt: Date?
     var list: GroceryList?
 
-    init(
-        name: String, brand: String? = nil, label: String? = nil, size: String? = nil, quantity: Int = 1,
-        aisle: Int? = nil, block: String? = nil, addedAt: Date = .now
-    ) {
+    init(name: String, brand: String? = nil, label: String? = nil, size: String? = nil, quantity: Int = 1, addedAt: Date = .now) {
         self.id = UUID()
         self.name = name
         self.brand = brand
         self.label = label
         self.size = size
         self.quantity = quantity
-        self.aisle = aisle
-        self.block = block
         self.addedAt = addedAt
     }
 }
@@ -108,7 +92,8 @@ final class GroceryItem: ItemDescribing {
 @Model
 final class ListEvent {
     enum Kind: String {
-        case added, updated, removed, checkedOff, unchecked, finished
+        //updating th products status in the database
+        case added, removed, checkedOff, unchecked, finished
     }
 
     enum Source: String {
@@ -137,7 +122,6 @@ final class ListEvent {
         let item = itemName ?? "an item"
         switch kind {
         case .added: return "Added \(item)"
-        case .updated: return "Updated \(item)"
         case .removed: return "Removed \(item)"
         case .checkedOff: return "Checked off \(item)"
         case .unchecked: return "Unchecked \(item)"
@@ -155,8 +139,6 @@ struct CommonItem: ItemDescribing, Identifiable, Hashable {
     var label: String?
     var size: String?
     var quantity: Int { 1 }
-    var aisle: Int?
-    var block: String?
     var timesListed: Int
     var lastAdded: Date
 
