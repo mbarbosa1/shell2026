@@ -7,10 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B00000000000000000000001 = {isa = PBXBuildFile; productRef = B00000000000000000000002; };
+		B00000000000000000000003 = {isa = PBXBuildFile; productRef = B00000000000000000000004; };
+		B00000000000000000000005 = {isa = PBXBuildFile; fileRef = B00000000000000000000006; };
 		A00000000000000000000022 /* ItemRecognition in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000021 /* ItemRecognition */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.json; path = ../Scripts/output/products.json; sourceTree = "<group>"; };
 		A00000000000000000000006 /* ItemRecognitionDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ItemRecognitionDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -25,6 +29,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000000022 /* ItemRecognition in Frameworks */,
+				B00000000000000000000001,
+				B00000000000000000000003,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -36,6 +42,7 @@
 			children = (
 				A00000000000000000000004 /* Sources */,
 				A00000000000000000000023 /* Info.plist */,
+				B00000000000000000000006,
 				A00000000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -69,6 +76,8 @@
 			name = ItemRecognitionDemo;
 			packageProductDependencies = (
 				A00000000000000000000021 /* ItemRecognition */,
+				B00000000000000000000002,
+				B00000000000000000000004,
 			);
 			productName = ItemRecognitionDemo;
 			productReference = A00000000000000000000006 /* ItemRecognitionDemo.app */;
@@ -99,6 +108,7 @@
 			mainGroup = A00000000000000000000003;
 			packageReferences = (
 				A00000000000000000000020 /* XCLocalSwiftPackageReference "../ItemRecognition" */,
+				B00000000000000000000007,
 			);
 			productRefGroup = A00000000000000000000005 /* Products */;
 			projectDirPath = "";
@@ -114,6 +124,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B00000000000000000000005,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -221,6 +232,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		B00000000000000000000007 = {isa = XCLocalSwiftPackageReference; relativePath = ../Scripts; };
 		A00000000000000000000020 /* XCLocalSwiftPackageReference "../ItemRecognition" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../ItemRecognition;
@@ -228,6 +240,8 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		B00000000000000000000002 = {isa = XCSwiftPackageProductDependency; package = B00000000000000000000007; productName = CatalogIntegration; };
+		B00000000000000000000004 = {isa = XCSwiftPackageProductDependency; package = B00000000000000000000007; productName = ProductDatabase; };
 		A00000000000000000000021 /* ItemRecognition */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A00000000000000000000020 /* XCLocalSwiftPackageReference "../ItemRecognition" */;

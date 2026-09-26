@@ -1,8 +1,9 @@
-# iPhone text extraction demo
+# iPhone item recognition demo
 
 Barebones standalone app for a **physical iPhone running iOS 17 or later**.
-It uses the local `../ItemRecognition` package. Keep both folders together.
-No account, database, localization service, downloaded model, or image fixtures are needed.
+It uses the local `../ItemRecognition` and `../Scripts` packages. Keep these folders
+together. The landing screen offers a database-backed test and the original
+**Camera only (no database)** mode. No localization service or downloaded model is needed.
 
 ## Install and run on your iPhone
 
@@ -25,6 +26,8 @@ No account, database, localization service, downloaded model, or image fixtures 
 
 ## Test extraction
 
+Choose **Camera only (no database)** on the landing screen for the original test.
+
 1. Hold the phone **upright in portrait**. The app uses the rear wide-angle camera.
 2. Point at a clear product label or printed page in good lighting. Keep it in
    focus and avoid holding it too close to the lens.
@@ -41,18 +44,128 @@ to the foreground. If access is denied, use the in-app settings button to allow
 camera access, then return and tap Start if necessary. There is no microphone
 access, recording, image saving, or upload.
 
+## Test the database and activation together
+
+1. Wait for the landing screen to show the imported product count (142 in the
+   current bundled single-store capture; no store ID is required).
+2. Select a product and then explicitly select one of its locations.
+3. Enter a landmark ID, start distance, and end distance, then tap **Save rule**.
+   For a home test you can use `demo-aisle`, `3`, and `20`. These are test values,
+   not measured store positions. Choose the shelf side if known and whether the
+   store carries the item; sold-out stock does not automatically disable it.
+4. Tap **Scan selected product**. The camera opens with manual progress at 0,
+   so a 3–20 metre rule remains armed and does not run OCR yet.
+5. Set progress to 5 and tap **Apply progress / restart**. With the matching
+   landmark and reliable progress, extraction and catalog matching run.
+6. Try another landmark, progress above 20, unreliable progress, or Pause and tap
+   Apply. The displayed gate reason should explain why recognition is disabled.
+7. Return to the setup screen to edit a rule or reload the bundled catalog, then
+   open a new scan. The database snapshots are refreshed on each new scan.
+8. Close and relaunch the app to check that your saved rule and product selection
+   identity persist. The UI does not remember the selection itself; select it again.
+
+The match display reports `disabled`, `noMatch`, `candidate`, or `confirmed`.
+The default lexical matcher needs at least 70% confidence-weighted word coverage,
+a 15 percentage-point lead over other candidates, and three accepted observations
+without a gap over two seconds. Its evidence score is not a probability. Real
+packaging may differ from scraped titles, so device tuning and verified metadata
+are still needed. The demo uses manual progress, not real phone localization.
+
+## Test an unlabeled onion at home
+
+1. Select **Fresh Yellow Onion - each** (TCIN `13474244`) and an available location.
+2. Save a demo rule: landmark `home-test`, activate at `3`, deactivate at `20`,
+   **Carried at this store** on. These are manual test inputs, not surveyed values.
+3. Tap **Scan selected product**. Set passed landmark to `home-test`, metres to
+   `5`, **Reliable** on and **Pause** off, then tap **Apply progress / restart**.
+4. Frame one onion prominently in good lighting. No written label is needed.
+   Because this product is mapped to the MVP produce taxonomy, the app uses
+   image recognition (Apple Vision on device), not OCR, and shows the top labels
+   collapsed to broad categories (`onion`, `potato`, `unknown`, …).
+5. After three strong `onion` observations the result is `confirmed` with
+   **onion confirmed (category level; variety not checked)**. For the MVP, any
+   onion confirms the onion product; red/white/yellow are not distinguished.
+   The same applies to apples, grapes, oranges and the other mapped produce.
+6. Try a potato, garlic, an empty scene, and poor lighting; inspect the actual
+   labels rather than assuming the selected target was detected. Set metres to
+   `21` and Apply to verify recognition stops outside the saved window.
+7. In Xcode's debug console, search for `[ItemRecognition]`. Visual diagnostics
+   include class scores, `[on-device]`/`[cloud]` source, and match status;
+   confirmed outputs include the stored product title, TCIN, and UUID.
+
+No model download is needed. This is prominent-item classification, not
+crowded-bin recognition. It does not infer variety, organic status, supplier,
+weight, or package count.
+
+### How the app chooses OCR or image recognition
+
+The choice is per product, made once when the scan session starts:
+
+- **Mapped in** `Scripts/RecognitionIntegration/Resources/visual-product-mappings.json`
+  (fresh produce: onion, apple, banana, orange, lime, grape, strawberry, avocado,
+  carrot, cucumber) → image recognition. Text detection and OCR never run.
+- **Not mapped** (all packaged products, including cereal or snacks that show
+  fruit on the box) → label detection plus OCR, unchanged.
+
+Both paths share one inference slot and the same activation gate and
+three-observation confirmation; evidence from the two paths is never combined.
+
+### Reading visual scores
+
+For produce, the selected item's label must reach **30%** and lead every other
+produce label by **10 points**. Background labels are folded into `unknown` and
+do not compete, because Apple Vision scores each label independently (a table
+and an onion can both score high). The screen and the Xcode console always show
+the selected item's label, other produce labels above 0%, and the real label
+behind `unknown`, highest first:
+
+```text
+[ItemRecognition] candidate | ... | Visual: unknown(table)=73%, onion=31%, potato=4% | [on-device] ...
+```
+
+Here onion passes: 31% ≥ 30% and it leads potato by 27 points. The same rule
+applies to apple, orange, and every other mapped item. Three passing
+observations in a row, each no more than 2 seconds apart, confirm the product.
+
+### Optional cloud assist
+
+In the setup screen, **Cloud assist for produce** sends a downscaled crop to
+`ItemRecognition/CloudProxy/` only when the on-device produce score is below
+30%. The proxy calls Gemini and holds the Google AI Studio key; the app stores only the proxy URL and a
+proxy token. Cloud answers are shown as `[cloud]`, must pass the same threshold
+and confirmation, and any timeout or error falls back to the on-device result.
+Run the proxy with `CLOUD_PROXY_MOCK_LABEL=onion` to test the connection
+without an API key; see `ItemRecognition/CloudProxy/README.md`.
+
+## Custom Core ML model (bounding boxes)
+
+Training requirements, annotation rules, and the dataset validator are in
+`ItemRecognition/Training/`. `CoreMLVisualClassifier` accepts either a classifier
+or a Create ML object detector (pass `classLabels` for detectors that do not
+publish them). Inject it as `ProduceCategoryClassifier(base:)` so the catalog
+mapping stays unchanged. No custom model is bundled yet.
+
+Visual policy values are provisional, not calibrated accuracy claims: `0.3`
+score and `0.1` margin for the Apple Vision produce baseline, and the library
+default of `0.8` and `0.2` for other models. Re-tune them for a custom model on
+its validation split.
+
 ## What this exercises
 
 The demo owns one `AVCaptureSession` and supplies upright BGRA pixel buffers to
-the existing `TextExtractionScheduler`. The scheduler uses its default automatic
-`VisionLabelRegionDetector` and real `VisionTextRecognizer`. No explicit crop is
-supplied. It processes every fifth submitted active frame; capture drops incoming
+`RecognitionCoordinator`. Its shared `RecognitionFrameScheduler` routes mapped
+visual items to classification before text detection; the OCR path uses
+`VisionLabelRegionDetector` and `VisionTextRecognizer`. The public
+`TextExtractionScheduler` remains an OCR compatibility facade. No explicit crop
+is supplied by the demo. It processes every fifth submitted active frame; capture drops incoming
 frames while a submission runs rather than creating an unbounded task backlog.
 
-The demo-only `CatalogReading` implementation supplies a fixed activation rule
-with a 3–20 metre window. The demo supplies reliable progress of 5 metres past
-`demo-aisle`, so the gate is active without actual localization. It supplies no
-catalog candidates and does not identify products or confirm matches.
+In camera-only mode, a fixed 3–20 metre rule and progress of 5 metres past
+`demo-aisle` activate extraction without product matching. In database mode,
+`ProductDatabaseStore` owns persistence, `SwiftDataCatalogReader` loads snapshots,
+and `RecognitionCoordinator` handles activation, extraction, matching, and temporal
+confirmation. No database query runs for each camera frame. ShellApp remains a
+separate browser demo and its local database is not shared with this app.
 
 Both the capture buffers and preview are rotated to portrait. Do not add a second
 orientation correction: the buffer passed to recognition already uses `.up`.

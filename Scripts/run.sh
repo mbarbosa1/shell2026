@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 hars=("$@")
 [ ${#hars[@]} -eq 0 ] && hars=(../milk.har ../others.har)
 
-python3 extract_har.py "${hars[@]}" -o output/products.json
+python3 extract_har.py "${hars[@]}" --include-unlocated -o output/products.json
 
 mkdir -p .build
 swift_flags=(-parse-as-library)

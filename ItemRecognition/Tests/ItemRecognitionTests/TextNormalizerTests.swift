@@ -19,6 +19,8 @@ final class TextNormalizerTests: XCTestCase {
         XCTAssertEqual(normalizer.normalize("2 LB"), "2lb")
         XCTAssertEqual(normalizer.normalize("24 ct"), "24ct")
         XCTAssertEqual(normalizer.normalize("1.5 L"), "1.5l")
+        XCTAssertEqual(normalizer.normalize("1 GAL"), "1gal")
+        XCTAssertEqual(normalizer.normalize("2 QT"), "2qt")
     }
 
     func testUnitPrefixOfALongerWordIsNotJoined() {

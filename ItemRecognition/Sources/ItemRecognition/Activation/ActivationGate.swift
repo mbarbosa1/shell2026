@@ -99,6 +99,11 @@ public actor ActivationGate {
         guard let rule = currentRule else {
             return (.waitingForLandmark, .missingActivationRule)
         }
+        guard rule.targetItemID == context.targetItemID, !rule.landmarkID.isEmpty,
+              rule.activateAfterMeters.isFinite, rule.deactivateAfterMeters.isFinite,
+              rule.activateAfterMeters >= 0, rule.deactivateAfterMeters >= rule.activateAfterMeters else {
+            return (.suspended, .invalidActivationRule)
+        }
 
         if !isItemInStore(rule) {
             return (.itemNotInStore, .itemNotInStore)
@@ -113,6 +118,7 @@ public actor ActivationGate {
         guard let meters = progress.metersPastLandmark else {
             return (.waitingForLandmark, .missingProgress)
         }
+        guard meters.isFinite else { return (.suspended, .invalidProgress) }
 
         guard suppliedLandmark == rule.landmarkID else {
             return (

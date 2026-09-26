@@ -11,6 +11,10 @@ public enum ActivationInactiveReason: Sendable, Equatable {
     case missingLandmark
     /// The observation carried no `metersPastLandmark`.
     case missingProgress
+    /// Progress was NaN or infinite.
+    case invalidProgress
+    /// The supplied rule has invalid bounds, identity, or landmark metadata.
+    case invalidActivationRule
     /// The supplied landmark id differs from the persisted `landmarkID`.
     case landmarkMismatch(supplied: String, expected: String)
     /// The observation was flagged unreliable by upstream localization.

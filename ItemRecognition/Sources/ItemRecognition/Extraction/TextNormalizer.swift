@@ -20,7 +20,7 @@ public protocol TextNormalizing: Sendable {
 /// 7. Tokens are the words plus each adjacent word pair.
 
 public struct TextNormalizer: TextNormalizing {
-    public static let units: [String] = ["floz", "oz", "ml", "kg", "g", "lbs", "lb", "ct", "l", "pk"]
+    public static let units: [String] = ["floz", "oz", "ml", "kg", "gal", "qt", "pt", "g", "lbs", "lb", "ct", "l", "pk"]
 
     private static let caseLocale = Locale(identifier: "en_US_POSIX")
 

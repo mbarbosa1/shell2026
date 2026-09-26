@@ -9,8 +9,7 @@ import ItemRecognition
 final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     enum Event: Sendable {
         case started
-        case result(ProductTextObservation, Double)
-        case noText
+        case update(RecognitionUpdate, Double)
         case failure(String)
     }
 
@@ -22,22 +21,22 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
     private var scanning = false
     private var processing = false
     private var runID: UInt = 0
-    private var submittedFrames = 0
-    private var scheduler = makeScheduler()
+    private var coordinator: RecognitionCoordinator?
+    private var context: RecognitionContext?
 
     init(receive: @escaping @Sendable (Event) -> Void) {
         self.receive = receive
         super.init()
     }
 
-    func start() {
+    func start(coordinator: RecognitionCoordinator, context: RecognitionContext) {
         queue.async { [self] in
             guard !scanning else { return }
             do {
                 try configureIfNeeded()
                 runID &+= 1
-                submittedFrames = 0
-                scheduler = Self.makeScheduler()
+                self.coordinator = coordinator
+                self.context = context
                 scanning = true
                 session.startRunning() // Intentionally off the main thread.
                 guard session.isRunning else { throw CameraError.couldNotStart }
@@ -53,6 +52,8 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         queue.async { [self] in
             scanning = false
             runID &+= 1
+            if let coordinator { Task { await coordinator.stop() } }
+            coordinator = nil
             if session.isRunning { session.stopRunning() }
         }
     }
@@ -89,20 +90,20 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        guard scanning, !processing, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        guard scanning, !processing, let coordinator, let suppliedContext = context,
+              let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         processing = true
-        submittedFrames += 1
-        let eligible = submittedFrames % scheduler.frameStride == 0
         let currentRun = runID
-        let currentScheduler = scheduler
         let timestamp = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         let image = RecognitionImage(timestamp: timestamp, pixelBuffer: buffer,
             imageResolution: CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer)),
             orientation: .up)
-        let context = RecognitionContext(targetItemID: DemoCatalog.targetID,
+        let context = RecognitionContext(targetItemID: suppliedContext.targetItemID,
             landmarkProgress: LandmarkProgressObservation(timestamp: timestamp,
-                passedLandmarkID: DemoCatalog.landmark, metersPastLandmark: 5, isReliable: true),
-            externalPause: false)
+                passedLandmarkID: suppliedContext.landmarkProgress.passedLandmarkID,
+                metersPastLandmark: suppliedContext.landmarkProgress.metersPastLandmark,
+                isReliable: suppliedContext.landmarkProgress.isReliable),
+            externalPause: suppliedContext.externalPause)
 
         // At most one asynchronous submission exists. New camera frames are dropped
         // while it runs, preventing a camera-rate backlog of tasks or retained buffers.
@@ -110,11 +111,8 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
             let started = Date()
             let event: Event?
             do {
-                if let observation = try await currentScheduler.submit(context, image: image) {
-                    event = .result(observation, Date().timeIntervalSince(started) * 1000)
-                } else {
-                    event = eligible ? .noText : nil
-                }
+                let update = try await coordinator.submit(context, image: image)
+                event = update.result != nil ? .update(update, Date().timeIntervalSince(started) * 1000) : nil
             } catch {
                 event = .failure("Recognition failed: \(error.localizedDescription). Tap Start camera to retry.")
             }
@@ -130,10 +128,6 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         }
     }
 
-    private static func makeScheduler() -> TextExtractionScheduler {
-        TextExtractionScheduler(gate: ActivationGate(catalog: DemoCatalog()), recognizer: VisionTextRecognizer())
-    }
-
     private enum CameraError: LocalizedError {
         case noRearCamera, configuration, orientation, couldNotStart
         var errorDescription: String? {
@@ -145,16 +139,4 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
             }
         }
     }
-}
-
-/// Demo-only activation fixture. No database or real-world position is inferred.
-private struct DemoCatalog: CatalogReading {
-    static let targetID = UUID(uuidString: "F622F98D-84A9-472F-9AFD-A0FC96B137CA")!
-    static let landmark = "demo-aisle"
-    func activationRule(for targetItemID: UUID) async throws -> DetectionActivationRuleSnapshot? {
-        guard targetItemID == Self.targetID else { return nil }
-        return DetectionActivationRuleSnapshot(targetItemID: targetItemID, landmarkID: Self.landmark,
-                                                activateAfterMeters: 3, deactivateAfterMeters: 20)
-    }
-    func catalogCandidates(for targetItemID: UUID) async throws -> [CatalogItemSnapshot] { [] }
 }

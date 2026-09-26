@@ -81,6 +81,24 @@ final class ActivationGateTests: XCTestCase {
 
     // MARK: - Landmark validation happens before the metre window
 
+    func testNonFiniteProgressCannotActivateDetection() async throws {
+        let (gate, _) = makeGate()
+        for meters in [Double.nan, Double.infinity, -Double.infinity] {
+            let decision = try await gate.evaluate(context(meters: meters))
+            XCTAssertEqual(decision.inactiveReason, .invalidProgress)
+            XCTAssertFalse(decision.isDetectionActive)
+        }
+    }
+
+    func testInvalidRuleCannotActivateDetection() async throws {
+        let rule = DetectionActivationRuleSnapshot(targetItemID: cerealID, landmarkID: landmark,
+            activateAfterMeters: 10, deactivateAfterMeters: 3)
+        let (gate, _) = makeGate(rules: [rule])
+        let decision = try await gate.evaluate(context(meters: 5))
+        XCTAssertEqual(decision.inactiveReason, .invalidActivationRule)
+        XCTAssertFalse(decision.isDetectionActive)
+    }
+
     func testDifferentLandmarkStaysWaitingAtAnyMeters() async throws {
         let (gate, _) = makeGate()
 

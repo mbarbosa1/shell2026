@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "classes": {
+    "onion": ["onion"],
+    "apple": ["apple"],
+    "banana": ["banana"],
+    "orange": ["orange", "oranges", "mandarin"],
+    "lemon": ["lemon"],
+    "lime": ["lime"],
+    "grape": ["grape", "grapes"],
+    "strawberry": ["strawberry", "strawberries"],
+    "avocado": ["avocado"],
+    "pear": ["pear"],
+    "peach": ["peach"],
+    "mango": ["mango"],
+    "pineapple": ["pineapple"],
+    "watermelon": ["watermelon"],
+    "grapefruit": ["grapefruit"],
+    "potato": ["potato"],
+    "tomato": ["tomato"],
+    "garlic": ["garlic"],
+    "carrot": ["carrot"],
+    "broccoli": ["broccoli"],
+    "cucumber": ["cucumber"]
+  },
+  "ignoredParentLabels": ["food", "fruit", "vegetable", "plant", "produce", "citrus_fruit"]
+}

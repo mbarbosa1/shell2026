@@ -1,4 +1,4 @@
-# Persistent Project Memory — Item Detection, OCR, and SwiftData Matching
+# Persistent Project Memory — Item Detection, Visual Classification, OCR, and SwiftData Matching
 
 ## Implementation status — verified September 26, 2026
 
@@ -7,12 +7,12 @@ This checklist records the current local implementation. Checked items are compl
 ### Complete
 
 - [x] Create the native Swift `ItemRecognition` library package with iOS 17+ and macOS 14+ support and an XCTest target.
-- [x] Define immutable catalog snapshots and the `CatalogReading` protocol for activation rules and candidate records. The concrete SwiftData adapter remains an external integration dependency.
+- [x] Define immutable catalog snapshots and the `CatalogReading` protocol, with a concrete SwiftData snapshot adapter in `Scripts/RecognitionIntegration/`.
 - [x] Implement `ActivationGate` using supplied target, landmark, progress, reliability, and external-pause context.
 - [x] Implement waiting, armed, active, suspended, threshold-passed, and item-not-in-store decisions with typed inactive reasons.
 - [x] Activate within the inclusive distance window: `activateAfterMeters <= progress <= deactivateAfterMeters`. Progress strictly greater than the end threshold turns detection off.
 - [x] Load and cache activation rules through `CatalogReading`, reset on target changes, and retry loading when a rule is missing.
-- [x] Emit `clearTemporalCandidates` when appropriate. Applying that signal to a future temporal matcher remains pending.
+- [x] Emit `clearTemporalCandidates` and consume it in `RecognitionCoordinator` to invalidate queued work and temporal evidence, including context changes without camera frames.
 - [x] Define `RecognitionImage` with a supplied pixel buffer, timestamp, resolution, orientation, and documented buffer ownership requirements. No camera session is created here.
 - [x] Validate declared image dimensions and caller-supplied crop bounds before gate evaluation.
 - [x] Convert between original-buffer top-left pixel crops and oriented, normalized lower-left Vision regions, with independently specified coordinate tests for all eight ImageIO orientations.
@@ -21,10 +21,19 @@ This checklist records the current local implementation. Checked items are compl
 - [x] Implement `TextExtractionScheduler`: default stride of five active frames, configurable within 5–10, one in-flight request, and one replaceable pending eligible frame.
 - [x] Suppress new OCR work while inactive and discard an in-flight observation if the gate is inactive or its target differs at completion.
 - [x] Return `ProductTextObservation` with raw and normalized text, confidence, bounding boxes, timestamp, target identifier, and optional shelf side.
-- [x] Verify the package with `swift test --package-path ItemRecognition`: **64 tests passed, zero failures** on macOS using Xcode 27.0. Coverage comprises 20 activation-gate tests, 20 extraction-scheduler tests, 13 normalization tests, 8 region-of-interest tests, and 3 detector-policy tests.
+- [x] Latest verification (September 26, 2026, after the MVP taxonomy and cloud-assist changes) passed **101 recognition tests** (after the background-margin and threshold change), **16 database integration tests**, **5 cloud-proxy tests**, the unsigned generic-iPhone demo build, a Swift-client-to-mock-proxy round trip, and the training validator on synthetic good/bad datasets. No physical-iPhone accuracy or thermal evaluation has been performed. The Gemini request format was accepted by the live endpoint (checked with an invalid key, which it rejected only for the key), but no labeled Gemini answer has been received yet because no Google AI Studio key is configured.
 - [x] Implement automatic label/text-region detection when upstream does not provide a crop, with validated image-coordinate mapping. `VisionLabelRegionDetector` uses `VNDetectTextRectanglesRequest`, unions visible text boxes, adds an 8% margin per edge, and clips to image bounds. This is a text-bearing-region MVP, not a package-outline or SKU classifier.
 - [x] Integrate detection and OCR in the same bounded scheduler slot. Supplied crops bypass detection; no detected region skips OCR. Pause/target-change generations prevent obsolete work from reaching OCR or returning observations after reactivation.
 - [x] Add a barebones standalone physical-iPhone app in `ItemRecognitionDemo/`, with rear-camera preview, Start/Stop, raw/normalized text, OCR confidence, and processing time. It uses the local package's real automatic detector and OCR with a demo-only active context. The unsigned Debug build for `generic/platform=iOS` succeeded with Xcode 27.0; signed installation and camera behavior on an actual phone remain to be verified.
+- [x] Integrate the database owner's concrete SwiftData `CatalogReading` adapter and preload the relevant catalog candidate snapshots.
+- [x] Keep product names and persistence in the database layer. Existing `Product` and `StoreLocation` schemas are unchanged; database-owned additive tables store recognition UUIDs, per-location activation settings, and import state. Imports preserve IDs, missing titles, and existing locations. The demo uses one store without store identifiers.
+- [x] Implement conservative catalog matching and conflict rejection against the preloaded aisle candidates, plus configurable temporal confirmation. Default policy requires score ≥ 0.70, lead ≥ 0.15, and three observations with gaps ≤ two seconds. Scores are evidence coverage, not calibrated probabilities; physical accuracy remains unverified.
+- [x] Implement `RecognitionCoordinator`, `ItemRecognitionResult`, and confirmed `ItemObservation` output. `stop()` ends a session; new targets, imports, locations, or rule edits require a fresh snapshot/coordinator.
+- [x] Add product/location selection, persisted rule editing, and manual progress controls to `ItemRecognitionDemo`. ShellApp remains an independent demo; neither UI owns the catalog contract. Preserve camera-only mode for isolated extraction checks.
+
+### Database integration decisions
+
+The database and bridge are local library targets in `Scripts/Package.swift`; no recognition implementation imports SwiftData. `ProductDatabaseStore` confines model access to its model actor, and `SwiftDataCatalogReader` is an immutable session snapshot. No title/ID persistence lives in activation. Rules use explicit product and location selection and are never inferred from an aisle label or stock count. Location data in partial captures is merged, not used to retire old locations. A tested additive schema upgrade preserves an existing Product/StoreLocation store. Detailed ownership, behavior, test commands, limitations, and future database work are in `Scripts/INTEGRATION.md`.
 
 Scheduler unit tests use fake recognizers and detectors. Coordinate and detector-policy tests validate geometry and region selection without invoking real Vision inference. The synthetic image fixtures, generator, and real-Vision integration suite were removed at the user's request. This checklist describes the local working tree rather than a committed release.
 
@@ -41,30 +50,92 @@ Several visible labels may be combined into one region. Isolating individual pac
 ### Pending — required to complete product recognition
 
 
-- [ ] Add photos of the actual demo products and validate detection/OCR on the intended iPhone, including real shelf clutter and optical glare/blur.
-- [ ] Integrate the database owner's concrete SwiftData `CatalogReading` adapter and preload the relevant catalog candidate snapshots.
-- [ ] Implement catalog matching and scoring for brand, product family, variant, and size, including conflict rejection and matching tests.
-- [ ] Implement temporal confirmation, candidate expiration, and consumption of the gate's candidate-clearing signal.
-- [ ] Implement `RecognitionCoordinator`, `ItemRecognitionResult`, and `ItemObservation`, including target completion and stale-result handling.
+- [ ] Tune the lexical matcher against real packaging and verified brand/alias metadata; validate neighboring variants, sizes, and multi-label scenes on the intended device.
+- [ ] Add explicit location retirement/reconciliation and multi-store inventory only if needed, with the database owner. Existing stored locations are preserved on partial captures.
 - [ ] Integrate the main iOS application with the real upstream camera and localization inputs. The standalone demo uses its own camera session and simulated activation inputs, not the navigation application's integration.
 - [ ] Connect optional result recording through the database owner's adapter if persistence is required.
 - [ ] Run end-to-end tests on the intended iPhone and record accuracy, wrong-variant acceptance, latency, memory, thermal behavior, and agreed acceptance thresholds.
+
+### Visual classification for unlabeled items — implementation and remaining validation
+
+Requested and implemented as a first native visual path September 26, 2026. **The pipeline and Apple Vision baseline are implemented; a custom produce model, exact-SKU accuracy validation, and physical-device evaluation remain pending.** This explicitly extends the text-recognition scope below. All existing platform and ownership constraints still apply. Earlier OCR-only flow descriptions describe that sibling path, not the only available recognition mode.
+
+Implementation uses Apple's built-in `VNClassifyImageRequest` revision 2 immediately, plus an injectable `CoreMLVisualClassifier` for a future validated custom model. All mapped produce goes through `ProduceCategoryClassifier` (`mvp.produce.categories.v1`), which collapses model labels into the broad taxonomy in `Resources/produce-taxonomy.json`. Every taxonomy alias was checked against the installed Vision vocabulary. No shared database schema change or second camera session was added.
+
+#### MVP decisions — September 26, 2026 (user direction; supersedes earlier "category-only, no cloud" rules)
+
+1. **Broad labels only.** Onion is `onion`: yellow, red, white, and sweet are not differentiated. The same applies to every fruit and vegetable (all apple varieties are `apple`, and so on). Variety, organic status, size, and brand are never classes.
+2. **Category-level confirmation.** A mapping on the MVP taxonomy model with `allowsConfirmation: true` confirms the selected product when three observations pass the policy. The result reason is `acceptedCategory` ("variety not checked"), and neighbors sharing the label do not block it. Raw `apple.vision.classify-image` mappings still cannot confirm, and SKU-level custom models keep the `accepted`/`ambiguousCatalog` rules.
+3. **Choosing OCR or image recognition.** The choice is made per product at session setup: a product mapped in `visual-product-mappings.json` uses image recognition, and everything else uses label detection plus OCR. 27 fresh-produce products are mapped. Packaged items with produce imagery (cereal, snacks, oatmeal) stay on OCR. Evidence from the two paths is never combined.
+4. **Cloud assist (approved, optional).** When the best on-device produce score is below `CloudAssistPolicy.localScoreBelow` (library default 0.8; the demo sets it to the Apple Vision produce threshold, 0.3), `ProduceCategoryClassifier` sends one upright crop (at most 512 px on the long side) through `HTTPCloudProduceLabeler` to `ItemRecognition/CloudProxy/server.py`. The cloud provider is **Google Gemini** (user decision, replacing OpenAI). The proxy holds the Google AI Studio key in `GEMINI_API_KEY` and sends one `generateContent` request with the JPEG as `inline_data`, `responseMimeType: application/json`, and a `responseJsonSchema` whose label enum is the taxonomy. The default model is `gemini-3.1-flash-lite`, overridable with `GEMINI_MODEL`. Safety blocks map to `unknown`. No provider key is stored in the app. Cloud answers carry `kind: .cloudSuggestion`, share the local model-version string so switching source does not reset confirmation, pass the same threshold and three-observation rule, and fall back to the on-device result on any error, invalid label, or the 200-request session cap. The scheduler's single slot serializes requests. Answers slower than the 2-second confirmation gap cannot chain into a confirmation.
+5. **Training uses bounding boxes.** The custom model will be a Create ML Object Detector trained on the same broad labels. `CoreMLVisualClassifier` accepts detector output and collapses boxes to the best score per label. The model plugs in as `ProduceCategoryClassifier(base:)`, so mappings do not change. Requirements, annotation rules, and the validator are in `ItemRecognition/Training/`.
+6. **Background does not compete; lower Apple Vision threshold (September 26, 2026, after first iPhone test).** On-device, onion scored 29–31% while the folded `unknown` bucket (e.g. "table") scored 73%, so every frame was `noMatch`. Because `VNClassifyImageRequest` scores labels independently, for the MVP taxonomy model `VisualCatalogMatcher` now compares the selected item's label (onion, apple, orange, …, whichever the product maps to) only against other produce labels; `unknown` is ignored. Other models (custom detectors) still treat every non-target label, including `unknown`, as competition. The demo uses `VisualRecognitionPolicy.appleVisionProduce` (0.3 score, 0.1 margin over the best other produce label, three observations) for MVP mappings; the library default stays 0.8/0.2 for custom models. Both values are provisional until step 8. `VisualObservation.backgroundLabel` keeps the raw label behind `unknown`, and the demo log/screen always list the selected item's score, other produce labels above 0% (top three), and `unknown(<label>)`, sorted by score, e.g. `unknown(table)=73%, onion=31%, potato=4%`.
+
+#### Intended first outcome
+
+Point the iPhone demo camera at one prominently framed, unlabeled onion of any color. The pipeline recognizes `onion` and confirms the database's `Fresh Yellow Onion - each` record (TCIN `13474244`) at category level, at a selected location (currently G10 or G13, floor 01). The adapter resolves the current persisted recognition UUID. Neither the model nor activation owns product names or generates product IDs.
+
+Category confirmation means "an onion is in view while searching for the onion product." It does not establish variety, organic status, supplier, price, weight, or package count. The first version assumes one prominent item; crowded-bin localization, multiple-object tracking, and instance counting are later work.
+
+#### Stack and ownership
+
+- Keep iOS 17+, macOS 14+, native Swift, actors, async/await, immutable Sendable values, and XCTest.
+- Use the installed Apple Vision image classifier for the initial category demo; execute an injected custom Core ML classifier through `VNCoreMLRequest` when a validated artifact is supplied; supply the existing Core Video pixel buffer and ImageIO orientation. Keep inference off the main actor and keep the model resident for the session.
+- Use Apple's Create ML app on the development Mac to train/export the model (Object Detector, bounding boxes). Do not add Python ML libraries. The only cloud or LLM use is the optional, off-by-default cloud assist through the server-side proxy described in the MVP decisions above. The on-device path must keep working without it.
+- Preserve the existing camera owner, activation gate, localization boundary, and SwiftData gateway. Do not create another camera session, implement landmark recognition, change shared SwiftData models/migrations, or add per-frame database access.
+- Keep product-image URLs, purchase URLs, prices, and inventory fields out of inference snapshots. The model consumes camera pixels; catalog linking consumes IDs and explicit visual-class metadata.
+
+#### Implementation sequence — completed pipeline and pending model validation
+
+1. [x] **Define initial catalog eligibility.** `Scripts/RecognitionIntegration/Resources/visual-product-mappings.json` maps 27 fresh-produce TCINs (including onion `13474244`) to broad classes of `mvp.produce.categories.v1`, with category-level confirmation enabled. Mapping presence selects visual mode; unmapped products retain OCR. `VisualProductMappings` validates version, duplicate TCINs, and empty labels, and still prohibits confirmation with the raw Vision model ID. The adapter joins mappings only to actual preloaded catalog records, preserving their existing UUIDs/titles. No title substring guesses are used. Durable editable metadata remains database-owner work.
+
+2. [ ] **Train and validate the actual model.** Requirements are defined in `ItemRecognition/Training/README.md`: Create ML Object Detector, broad taxonomy labels, bounding-box rules, capture counts (≥100 train images and ≥10 specimens per required class for a first run), hard negatives, a specimen/session split, a Create ML JSON format, and proposed acceptance thresholds. `validate_annotations.swift` enforces labels, box geometry, orientation, and split leakage. **Photo capture, labeling, training, and evaluation have not started.** Record each trained model in `Training/models/` using `model-card-template.md`.
+
+3. [x] **Add immutable visual contracts.** `Visual/VisualClassifying.swift` contains the classifier protocol, model information, observations, eligibility metadata, policy, and typed errors. `CatalogItemSnapshot` carries optional visual metadata. Results carry explicit visual evidence/source and preserve empty OCR text for visual-only observations. Input regions describe the classified pixels, not detected object boxes.
+
+4. [x] **Implement Vision/Core ML execution.** `VisionImageClassifier.swift` provides the installed Apple classifier; `CoreMLVisualClassifier.swift` accepts a compiled custom model and explicit preprocessing. Models/requests stay resident on an actor. Both use the supplied pixel buffer, orientation, and validated optional crop; neither requires text detection. Model compatibility, class vocabulary, scores, and observation metadata are validated. Custom model training/bundling is pending in step 2.
+
+5. [x] **Share the bounded inference budget.** Extract the current cadence/slot/generation mechanics into `Extraction/RecognitionFrameScheduler.swift`, preserving the OCR behavior through `TextExtractionScheduler`. One scheduler owns both modes: every fifth to tenth active frame, at most one in-flight job and one replaceable pending eligible frame. Route using the target's explicit mode before text detection. Distinguish skipped frames from completed empty evidence and errors. Check activation and generation before and after inference; reset evidence on stop, pause, target/context changes, or model/catalog revision changes. Do not run independent OCR and visual queues or apply cadence twice.
+
+6. [x] **Implement visual-to-catalog matching (policy calibration pending).** Add `Catalog/VisualCatalogMatcher.swift`. Evaluate the classifier's full competing-class scores before narrowing to the preloaded target/neighborhood; do not discard a potato prediction because only an onion is being searched for. Then apply the explicit catalog mapping and ambiguity checks. Expose a separate configurable visual policy and require repeated evidence; defaults are provisional until step 8 validates model-specific score/margin thresholds; the existing OCR coverage threshold is not a visual probability threshold. Start temporal testing with the existing three-observation/two-second-gap policy, but tune it on device. Do not sum OCR and visual scores or alternate weak evidence across modes to reach confirmation. For ambiguous identity, return the class evidence without a matched UUID; for approved unique matches, return the database's UUID. Inference failures reset confirmation evidence. Selecting an onion target is not evidence that the image contains an onion.
+
+7. [x] **Integrate the existing coordinator and barebones demo.** Update `RecognitionCoordinator` and `RecognitionUpdate` to carry either OCR or visual observations through the same gate and confirmation lifecycle. Update `ItemObservation` so visual evidence is explicit and does not masquerade as extracted words; preserve supplied side metadata independently of OCR. Extend `SwiftDataCatalogReader` to join reviewed visual metadata while creating the immutable session snapshot. In `ItemRecognitionDemo`, display/print evidence source, visual class, model score, candidate/confirmed status, and the matched database title/TCIN/UUID only on confirmation. Keep ShellApp independent. Use the existing manual landmark progress for home testing; real localization will later supply the same context without changing the classifier.
+
+8. [ ] **Complete real-produce and physical-device evaluation.** Automated contract, lifecycle, mapping, and real-Vision smoke tests pass; the held-out real-produce dataset, model calibration, and physical-iPhone measurements below remain pending. Use fake classifiers to verify inactive-gate suppression, missing-model failures, unknown/unmapped classes, lookalike rejection, duplicate/out-of-order timestamps, expiry, ambiguous catalog identities, and pause-during-inference invalidation. Test mapping to TCIN `13474244` and its persisted UUID, including restart/reimport stability. Add real visual-model image tests with held-out produce and explicit orientation/crop cases; this new scope does not restore the previously removed real-OCR fixture suite. Re-run OCR regressions after extracting shared scheduling. On the intended iPhone, measure class precision/recall, false confirmed product matches, time to confirmation, inference latency, memory, and thermal behavior. Report sample counts and failure cases; agree numerical acceptance thresholds before marking complete.
+
+9. [ ] **Complete the physical home demonstration.** Select the existing onion product and location, save an explicit demo activation rule, and supply matching manual progress inside its window. Show a real unlabeled onion and verify visual evidence and the correct persisted catalog identity. Repeat with confusing produce, no item, bad lighting, and a closed gate. Reopen the app to verify identity stability. Mark this section complete only after the model, mapping, automated checks, and physical-device results are all available; record limitations for exact-SKU recognition and multi-item scenes.
+
+#### Files and responsibilities
+
+| Area | Files/resources | Change |
+|---|---|---|
+| Classifier contracts and inference | `ItemRecognition/Sources/ItemRecognition/Visual/` (new) | Immutable observations, injected classifier, model-specific policy, Vision/Core ML execution. |
+| Scheduling and orchestration | `Extraction/RecognitionFrameScheduler.swift` (new), `TextExtractionScheduler.swift`, `RecognitionCoordinator.swift` | Shared inference slot/cadence and mode routing without changing activation ownership. |
+| Catalog matching and output | `Catalog/VisualCatalogMatcher.swift` (new), `CatalogReading.swift`, `ItemRecognitionResult.swift` | Explicit visual metadata, ambiguity handling, evidence source, and confirmed database identity. |
+| Database integration | `Scripts/RecognitionIntegration/SwiftDataCatalogReader.swift`, `Resources/visual-product-mappings.json` (new), `Scripts/Package.swift` | Load/validate mapping resources at session setup; no shared model/schema changes. |
+| Training requirements and dataset validation | `ItemRecognition/Training/` | Bounding-box rules, capture/split requirements, Create ML steps, validator, and model-card template. No dataset or model is committed. |
+| Cloud assist | `Visual/CloudProduceLabeling.swift`, `Visual/ProduceCategoryClassifier.swift`, `ItemRecognition/CloudProxy/` | Weak-local fallback, HTTP client, JPEG crop encoder, and a Python standard-library proxy holding the Gemini (Google AI Studio) key. |
+| Custom model artifact and provenance (pending) | demo Xcode project (future) | No custom artifact is bundled. Supply a validated model with its model card. |
+| Demo | `CatalogDemoView.swift`, `DemoScanConfiguration.swift`, `CameraDemoView.swift`, `Info.plist` | Construct `ProduceCategoryClassifier` (with optional cloud assist settings), display `[on-device]`/`[cloud]` evidence, and allow local-network HTTP to the proxy. |
+| Verification | `ItemRecognition/Tests/ItemRecognitionTests/`, `Scripts/Tests/` | Visual contract/inference tests, adapter tests, OCR regression, and recorded device checks. |
+
+Apple references: [VNClassifyImageRequest](https://developer.apple.com/documentation/vision/vnclassifyimagerequest) supplies the built-in category classifier. [Vision and Core ML image classification](https://developer.apple.com/documentation/coreml/classifying-images-with-vision-and-core-ml) describes model reuse, preprocessing, orientation, and classification output. [Creating an image classifier](https://developer.apple.com/documentation/createml/creating-an-image-classifier-model) describes the Apple-native training/evaluation workflow. [VNCoreMLRequest](https://developer.apple.com/documentation/vision/vncoremlrequest) documents model-dependent output and score semantics; thresholds must respect the chosen model rather than assume calibrated probabilities.
 
 ### Test the completed work in Xcode
 
 1. Open `ItemRecognition/Package.swift` in Xcode.
 2. Select the `ItemRecognition` package scheme and **My Mac** destination to reproduce the verified platform.
-3. Choose **Product > Test** (`Command-U`). Review all five suites in the Test navigator; the current suite contains 64 tests.
+3. Choose **Product > Test** (`Command-U`). Review the suites in the Test navigator; the recognition package now contains 101 tests, including visual-path and `CloudAssistTests` checks. Run `python3 -m unittest test_server` in `ItemRecognition/CloudProxy/` for the proxy. Open `Scripts/Package.swift` to run the database integration suite.
 4. Run individual `ActivationGateTests` with a breakpoint in `ActivationGate.evaluate` to inspect the state and inactive reason. The fixture uses `aisle_25_top` and an inclusive 3–20 metre window.
 5. Run `testFirstFourFramesSkipAndFifthRunsOCR` in `TextExtractionSchedulerTests` and inspect the unwrapped observation. The fake recognizer supplies `Honey Nut CHEERIOS` and `12 OZ`, which normalize to `honey nut cheerios` and `12oz`.
 6. Run `testPauseDiscardsPendingFrameAndInFlightResult` and `testResumeAfterPauseRequiresFreshStride` to inspect pause/resume behavior.
 7. Run `VisionRegionOfInterestTests` and `VisionLabelRegionDetectorTests` for coordinate mapping and detector-policy checks. Run `testPauseAndResumeDuringDetectionDiscardOldFrameBeforeOCR` for interruption behavior. These are unit tests, not real-image Vision integration tests.
 
-For live camera testing, open `ItemRecognitionDemo/ItemRecognitionDemo.xcodeproj`, select your signing team and connected physical iPhone, then run with Command-R and allow camera access. Hold the phone upright in portrait. Setup details are in `ItemRecognitionDemo/README.md`. The demo supplies reliable progress of 5 metres within a 3–20 metre activation window solely to exercise extraction without database/localization dependencies. Identifying a catalog item still requires matching and temporal confirmation. The standalone demo owns one camera session; the recognition library continues to consume supplied frames and owns none.
+For live camera testing, open `ItemRecognitionDemo/ItemRecognitionDemo.xcodeproj`, select your signing team and connected physical iPhone, then run with Command-R. Choose camera-only mode for the original test, or select a database product/location, save a rule, and open a scan. Database-mode progress starts at zero; change it and tap Apply to test the gate. Rules and names persist in the database; progress is a manual development input. Setup details are in `ItemRecognitionDemo/README.md`. The demo owns one camera session; the recognition library consumes supplied frames and owns none.
 
 ## Purpose
 
-This document is the durable architectural memory for implementing grocery-item text recognition and SwiftData catalog matching in the Target-Navigation iOS application. Future design and implementation work should preserve the decisions below unless the user explicitly changes them.
+This document is the durable architectural memory for implementing grocery-item text recognition, unlabeled-item visual classification, and SwiftData catalog matching in the Target-Navigation iOS application. Future design and implementation work should preserve the decisions below unless the user explicitly changes them.
 
 This branch receives image input and recognition context from other parts of the application. It uses Apple Vision OCR, optional Core ML element/label-region detection, and a narrow SwiftData catalog gateway. It does not implement user localization, database registration, or bracelet sensors.
 
@@ -77,6 +148,7 @@ This scope is intentionally narrow.
 - Accept a provided camera image or detected-element crop through a Swift interface.
 - Detect a product package, label, or text-bearing element when a crop is not already supplied.
 - Extract text from that element with Apple Vision OCR.
+- Classify a prominently framed unlabeled item with Apple Vision or an injected Core ML classifier, using explicit catalog eligibility and conservative identity matching.
 - Normalize the extracted text.
 - Read product records through the SwiftData catalog interface supplied by the database branch.
 - Load the target item's aisle-landmark activation rule and detection threshold from the SwiftData adapter.
@@ -112,8 +184,9 @@ Use only iOS-friendly Swift tooling and Apple-native interfaces unless the proje
 - **Swift** — all production interfaces and implementation.
 - **Swift concurrency** — `actor`, `async`/`await`, `Task`, and immutable `Sendable` value types.
 - **SwiftData** — read access to registered catalog objects through the database branch's schema and gateway.
-- **Apple Vision** — `VNRecognizeTextRequest` for OCR and `VNCoreMLRequest` when a Core ML detector is used through Vision.
-- **Core ML** — on-device model execution for locating a product package, label, or text-bearing region when needed.
+- **Apple Vision** — `VNRecognizeTextRequest` for OCR, `VNClassifyImageRequest` for the built-in visual-category baseline, and `VNCoreMLRequest` for injected Core ML inference.
+- **Core ML** — on-device model execution for product/label-region detection when needed, and injected custom visual classifiers or Create ML object detectors. No custom produce model is currently bundled.
+- **Optional cloud assist** — `URLSession` to the development proxy in `ItemRecognition/CloudProxy/` (Python standard library, Gemini API `generateContent`). Off by default; never on the OCR path.
 - **Core Video** — `CVPixelBuffer` image input supplied by the upstream camera owner.
 - **Core Graphics / ImageIO** — crop geometry and explicit image orientation metadata.
 - **Foundation** — identifiers, strings, normalization, timestamps, and collection types.

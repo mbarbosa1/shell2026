@@ -16,6 +16,7 @@ let package = Package(
     targets: [
         .target(
             name: "ItemRecognition",
+            resources: [.process("Resources")],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
             ]
