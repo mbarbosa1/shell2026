@@ -86,4 +86,7 @@ struct CalibrationSessionData: Codable {
     var nodes: [NodeRecord] = []
     var edges: [EdgeRecord] = []
     var restartEvents: [RestartEvent] = []
+    /// The cameraToPivotOffsetMeters every position in this session was
+    /// recorded with. nil only in files that predate the setting.
+    var pivotOffsetMeters: Double?
 }

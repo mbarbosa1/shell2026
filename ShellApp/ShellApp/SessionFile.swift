@@ -12,6 +12,9 @@ struct SessionFile: Codable {
     var store: String
     var savedAt: Date
     var coordinates = "Meters, seen from above. Points are [x, z]: x = right, z = backward, relative to where the phone was when calibration opened. headingDegrees: 0 = the direction faced at that moment, positive = turned left."
+    /// Distance from the camera lens back to the recorded pivot (cart rear
+    /// axle). Every position in this file was recorded with this value.
+    var pivotOffsetMeters: Double?
     var summary: Summary
     var start: Start?
     var nodes: [Node]
@@ -124,6 +127,7 @@ extension SessionFile {
         let observations = session.edges.flatMap(\.visitObservations)
         self.store = session.storeName
         self.savedAt = savedAt
+        self.pivotOffsetMeters = session.pivotOffsetMeters.map(cm)
         self.summary = Summary(
             nodes: session.nodes.count,
             edges: session.edges.count,
@@ -155,6 +159,7 @@ extension SessionFile {
         let pathByReturn = Dictionary(returnPaths.map { ($0.return, $0.points) }, uniquingKeysWith: { first, _ in first })
 
         var session = CalibrationSessionData(storeName: store)
+        session.pivotOffsetMeters = pivotOffsetMeters
         session.startPose = start.map { StartPose(position: point2D($0.position), headingDegrees: $0.headingDegrees) }
         session.nodes = nodes.map { NodeRecord(id: $0.id, name: $0.name, position: point2D($0.position)) }
         session.edges = edges.map { edge in
@@ -193,6 +198,7 @@ extension SessionFile {
             ("store", .string(store)),
             ("savedAt", .string(dates.string(from: savedAt))),
             ("coordinates", .string(coordinates)),
+            ("pivotOffsetMeters", pivotOffsetMeters.map(JSON.number) ?? .null),
             ("summary", .object([
                 ("nodes", .number(Double(summary.nodes))),
                 ("edges", .number(Double(summary.edges))),

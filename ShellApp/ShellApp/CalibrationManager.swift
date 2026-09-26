@@ -58,7 +58,9 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
     // Minimum spacing between recorded breadcrumb points, in meters.
     private let breadcrumbSpacingMeters = 0.3
 
-    // MUST BE SET FOR THE ACTUAL MOUNT. The camera transform is the LENS
+    // MUST BE SET FOR THE ACTUAL MOUNT — editable in the app (top bar),
+    // remembered between launches, and locked once the session has a node
+    // so one map never mixes two offsets. The camera transform is the LENS
     // position, which swings around whatever the phone pivots about; every
     // recorded position is instead shifted this far BACK along the camera's
     // horizontal viewing direction, onto that pivot.
@@ -72,7 +74,23 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
     //
     // Check on device: turning in place should leave "Since last node"
     // near 0.
-    private let cameraToPivotOffsetMeters = 0.35
+    @Published private(set) var cameraToPivotOffsetMeters: Double
+    private static let offsetDefaultsKey = "cameraToPivotOffsetMeters"
+
+    /// Only while the session has no nodes: positions already recorded were
+    /// computed with the old value and can't be recomputed.
+    var canChangeOffset: Bool { session.nodes.isEmpty }
+
+    func setCameraToPivotOffset(_ meters: Double) {
+        guard canChangeOffset else {
+            lastMessage = "Offset is locked once a node exists — Reset to change it."
+            return
+        }
+        cameraToPivotOffsetMeters = meters
+        UserDefaults.standard.set(meters, forKey: Self.offsetDefaultsKey)
+        lastMessage = String(format: "Cart offset set to %.2f m.", meters)
+        persist()
+    }
 
     /// Last reliable horizontal viewing direction (unit vector). Reused while
     /// the phone points steeply up or down, where the live direction's
@@ -94,6 +112,7 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
 
     override init() {
         currentSessionURL = Self.newSessionURL()
+        cameraToPivotOffsetMeters = UserDefaults.standard.object(forKey: Self.offsetDefaultsKey) as? Double ?? 0.35
         super.init()
         arSession.delegate = self
         scanForPriorSessions()
@@ -550,6 +569,7 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
     // MARK: - Persistence
 
     private func persist() {
+        session.pivotOffsetMeters = cameraToPivotOffsetMeters
         do {
             let data = SessionFile(session, savedAt: .now).encoded()
             try data.write(to: currentSessionURL, options: .atomic)

@@ -29,6 +29,8 @@ struct CalibrationView: View {
     @State private var showHeadingDiagnostic = false
     @State private var showPriorSessions = false
     @State private var showMap = false
+    @State private var showOffsetEditor = false
+    @State private var offsetText = ""
     @State private var newNodeName = ""
     @State private var hasStarted = false
 
@@ -90,6 +92,22 @@ struct CalibrationView: View {
                 showReturnPicker = false
             }
         }
+        .alert("Cart offset", isPresented: $showOffsetEditor) {
+            TextField("meters, e.g. 0.40 or -0.25", text: $offsetText)
+                .keyboardType(.numbersAndPunctuation)
+            Button("Save") {
+                // Accept "0,4" too, and reject anything that can't be a real
+                // phone-to-axle distance on a cart.
+                if let meters = Double(offsetText.replacingOccurrences(of: ",", with: ".")), abs(meters) <= 3 {
+                    manager.setCameraToPivotOffset(meters)
+                } else {
+                    manager.lastMessage = "Not a valid offset — enter meters, e.g. 0.40 or -0.25."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Horizontal distance from the camera lens to the middle of the rear wheels. Positive if the wheels are behind the phone, negative if they're in front. Locked once the first node is marked.")
+        }
         .sheet(isPresented: $showMap) {
             NavigationStack {
                 GraphMapView(session: manager.session, currentNodeId: manager.lastNodeId)
@@ -116,22 +134,36 @@ struct CalibrationView: View {
     // MARK: - Subviews
 
     private var statusBar: some View {
-        HStack {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 14, height: 14)
-            Text(statusText)
-                .foregroundColor(.white)
+        VStack(spacing: 8) {
+            HStack {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 14, height: 14)
+                Text(statusText)
+                    .foregroundColor(.white)
+                    .font(.caption)
+                Spacer()
+                Button(showHeadingDiagnostic ? "Hide heading" : "Show heading") {
+                    showHeadingDiagnostic.toggle()
+                }
                 .font(.caption)
-            Spacer()
-            Button(showHeadingDiagnostic ? "Hide heading" : "Show heading") {
-                showHeadingDiagnostic.toggle()
+                Spacer()
+                Text("\(manager.session.nodes.count) nodes")
+                    .foregroundColor(.white)
+                    .font(.caption)
             }
-            .font(.caption)
-            Spacer()
-            Text("\(manager.session.nodes.count) nodes")
-                .foregroundColor(.white)
+            HStack {
+                Button {
+                    offsetText = String(format: "%.2f", manager.cameraToPivotOffsetMeters)
+                    showOffsetEditor = true
+                } label: {
+                    Label(String(format: "Cart offset: %.2f m", manager.cameraToPivotOffsetMeters),
+                          systemImage: manager.canChangeOffset ? "ruler" : "lock.fill")
+                }
                 .font(.caption)
+                .disabled(!manager.canChangeOffset)
+                Spacer()
+            }
         }
         .padding()
         .background(Color.black.opacity(0.5))
