@@ -28,6 +28,7 @@ struct CalibrationView: View {
     @State private var showResetConfirm = false
     @State private var showHeadingDiagnostic = false
     @State private var showPriorSessions = false
+    @State private var showMap = false
     @State private var newNodeName = ""
     @State private var hasStarted = false
 
@@ -87,6 +88,18 @@ struct CalibrationView: View {
             NodePickerView(nodes: manager.session.nodes.filter { $0.id != manager.lastNodeId }) { picked in
                 manager.markReturnToNode(nodeId: picked.id)
                 showReturnPicker = false
+            }
+        }
+        .sheet(isPresented: $showMap) {
+            NavigationStack {
+                GraphMapView(session: manager.session, currentNodeId: manager.lastNodeId)
+                    .navigationTitle(manager.session.storeName)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showMap = false }
+                        }
+                    }
             }
         }
         .sheet(isPresented: $showPriorSessions) {
@@ -191,6 +204,9 @@ struct CalibrationView: View {
                 Button("Return to Existing") { showReturnPicker = true }
                     .buttonStyle(.bordered)
                     .disabled(!manager.trackingQuality.canMarkNode || manager.segmentInterrupted || !manager.session.nodes.contains { $0.id != manager.lastNodeId })
+
+                Button("Map") { showMap = true }
+                    .buttonStyle(.bordered)
             }
 
             HStack(spacing: 12) {
@@ -198,7 +214,7 @@ struct CalibrationView: View {
                     .buttonStyle(.bordered)
 
                 if #available(iOS 16.0, *) {
-                    ShareLink(item: manager.exportFileURL()) {
+                    ShareLink(items: manager.exportFileURLs()) {
                         Text("Export Current")
                     }
                     .buttonStyle(.bordered)
@@ -238,23 +254,41 @@ private struct NodePickerView: View {
 }
 
 /// Read-only. These files are from PAST app launches, each with its own
-/// unrelated coordinate origin — they are listed here for export only and
-/// are never loaded back into the active recording session.
+/// unrelated coordinate origin — they can be viewed as a map or exported,
+/// but are never loaded back into the active recording session.
 private struct PriorSessionsView: View {
     let files: [URL]
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List(files, id: \.self) { file in
-                if #available(iOS 16.0, *) {
-                    ShareLink(item: file) {
-                        Text(file.lastPathComponent)
+                HStack {
+                    NavigationLink(file.lastPathComponent) {
+                        PriorSessionMapView(file: file)
                     }
-                } else {
-                    Text(file.lastPathComponent)
+                    ShareLink(items: CalibrationManager.exportFiles(for: file)) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.borderless)
                 }
             }
-            .navigationTitle("Prior Sessions (export only)")
+            .navigationTitle("Prior Sessions")
         }
+    }
+}
+
+private struct PriorSessionMapView: View {
+    let file: URL
+
+    var body: some View {
+        Group {
+            if let session = CalibrationManager.loadSession(from: file) {
+                GraphMapView(session: session)
+            } else {
+                ContentUnavailableView("Can't read this file", systemImage: "exclamationmark.triangle")
+            }
+        }
+        .navigationTitle(file.deletingPathExtension().lastPathComponent)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

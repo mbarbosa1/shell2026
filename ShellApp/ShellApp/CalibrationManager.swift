@@ -1,6 +1,7 @@
 import Foundation
 import ARKit
 import Combine
+import SwiftUI
 
 enum TrackingQuality: Equatable {
     case good
@@ -56,6 +57,27 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
 
     // Minimum spacing between recorded breadcrumb points, in meters.
     private let breadcrumbSpacingMeters = 0.3
+
+    // MUST BE SET FOR THE ACTUAL MOUNT. The camera transform is the LENS
+    // position, which swings around whatever the phone pivots about; every
+    // recorded position is instead shifted this far BACK along the camera's
+    // horizontal viewing direction, onto that pivot.
+    //
+    // Cart-mounted (phone facing forward): horizontal distance from the lens
+    // to the midpoint between the rear (fixed) wheels, measured along the
+    // cart. Positive if the axle is BEHIND the phone, negative if it is in
+    // front of it (common for a phone on the handle).
+    //
+    // Handheld testing: ~0.35 (phone held out in front of the body).
+    //
+    // Check on device: turning in place should leave "Since last node"
+    // near 0.
+    private let cameraToPivotOffsetMeters = 0.35
+
+    /// Last reliable horizontal viewing direction (unit vector). Reused while
+    /// the phone points steeply up or down, where the live direction's
+    /// horizontal component is too small to trust.
+    private var lastHorizontalForward: (x: Double, z: Double)?
 
     // PLACEHOLDER. Must be re-tuned from real discrepancy numbers collected
     // during the actual walkthrough. Shared by both loop-closure discrepancy
@@ -195,9 +217,27 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
 
     // MARK: - Position / heading extraction
 
+    /// Estimated position of the operator's BODY, not the camera lens.
+    /// Used for breadcrumbs, node positions and every discrepancy check, so
+    /// turning in place neither lays down breadcrumbs nor shifts where a
+    /// node is recorded depending on which way the operator faced.
     private func currentPosition() -> Point2D? {
         guard let t = currentTransform else { return nil }
-        return Point2D(x: Double(t.columns.3.x), z: Double(t.columns.3.z))
+        let camera = Point2D(x: Double(t.columns.3.x), z: Double(t.columns.3.z))
+
+        // Horizontal part of the camera's viewing direction (-Z column).
+        let fx = -Double(t.columns.2.x)
+        let fz = -Double(t.columns.2.z)
+        let length = (fx * fx + fz * fz).squareRoot()
+        // Below ~0.5 the phone is pitched more than ~60° up or down and the
+        // direction swings wildly with tiny wrist motion — hold the last one.
+        if length > 0.5 {
+            lastHorizontalForward = (fx / length, fz / length)
+        }
+        guard let forward = lastHorizontalForward else { return camera }
+
+        return Point2D(x: camera.x - forward.x * cameraToPivotOffsetMeters,
+                       z: camera.z - forward.z * cameraToPivotOffsetMeters)
     }
 
     /// Heading in degrees, derived from the camera's forward direction
@@ -208,8 +248,7 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
     /// above), range (-180, 180]. The ±180 wrap is therefore directly
     /// behind the start direction, not at it.
     ///
-    /// STILL VERIFY ON DEVICE with the live heading readout in
-    /// CalibrationView before trusting any turn-direction logic.
+    /// Verified on device: turning left reads positive, right negative.
     /// Degenerate when the phone points nearly straight up or down (the
     /// forward vector's horizontal projection shrinks toward zero).
     func yawDegrees() -> Double? {
@@ -512,14 +551,57 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
 
     private func persist() {
         do {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = .prettyPrinted
-            let data = try encoder.encode(session)
+            let data = SessionFile(session, savedAt: .now).encoded()
             try data.write(to: currentSessionURL, options: .atomic)
         } catch {
             lastMessage = "SAVE FAILED: \(error.localizedDescription)"
         }
+        saveMapImage()
+    }
+
+    /// The map PNG that sits next to a session's JSON file, same name.
+    static func mapImageURL(for sessionURL: URL) -> URL {
+        sessionURL.deletingPathExtension().appendingPathExtension("png")
+    }
+
+    /// Re-renders the graph map next to the JSON on every save, so the image
+    /// always matches the data and there's no separate "finish" step to
+    /// forget. Best-effort: a failed image never blocks or replaces the JSON.
+    private func saveMapImage() {
+        let url = Self.mapImageURL(for: currentSessionURL)
+        guard !session.nodes.isEmpty else {
+            // Undo can empty the session — don't leave an outdated map behind.
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let snapshot = session
+        // Every caller (UI actions and ARSession delegate callbacks, which
+        // default to the main queue) is already on the main thread.
+        MainActor.assumeIsolated {
+            let page = VStack(spacing: 4) {
+                Text(snapshot.storeName).font(.title2.bold())
+                Text(Date.now.formatted(date: .abbreviated, time: .shortened))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                GraphMapView(session: snapshot)
+            }
+            .padding(.top, 24)
+            .frame(width: 800, height: 1100)
+            .background(Color.white)
+            .environment(\.colorScheme, .light)
+
+            let renderer = ImageRenderer(content: page)
+            renderer.scale = 2
+            if let png = renderer.uiImage?.pngData() {
+                try? png.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    /// The JSON plus its map image, if one has been saved.
+    static func exportFiles(for sessionURL: URL) -> [URL] {
+        let image = mapImageURL(for: sessionURL)
+        return FileManager.default.fileExists(atPath: image.path) ? [sessionURL, image] : [sessionURL]
     }
 
     /// Lists prior calibration files for read-only export. These are never
@@ -534,8 +616,15 @@ final class CalibrationManager: NSObject, ObservableObject, ARSessionDelegate {
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
     }
 
-    func exportFileURL() -> URL {
-        currentSessionURL
+    /// Decodes a saved session file for DISPLAY only (the map view). The
+    /// result is never assigned to `session` — see scanForPriorSessions.
+    static func loadSession(from url: URL) -> CalibrationSessionData? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? SessionFile.decode(data).toSession()
+    }
+
+    func exportFileURLs() -> [URL] {
+        Self.exportFiles(for: currentSessionURL)
     }
 
     /// Starts a fresh session in a NEW timestamped file. The file for the

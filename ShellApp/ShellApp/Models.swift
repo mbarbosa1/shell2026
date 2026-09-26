@@ -26,6 +26,13 @@ struct Point2D: Codable, Equatable {
     }
 }
 
+extension Array where Element == Point2D {
+    /// Total walked distance along the points, in meters.
+    var pathLength: Double {
+        zip(self, dropFirst()).reduce(0) { $0 + $1.0.distance(to: $1.1) }
+    }
+}
+
 struct VisitObservation: Codable, Identifiable {
     var id: UUID = UUID()
     let fromNodeId: String         // which node this traversal departed from
@@ -56,10 +63,9 @@ struct NodeRecord: Codable, Identifiable {
 struct StartPose: Codable {
     let position: Point2D
     let headingDegrees: Double
-    // Sign convention NOT verified against real device behavior.
-    // See CalibrationManager.yawDegrees() and the heading diagnostic in
-    // CalibrationView — confirm before trusting any turn-direction logic
-    // built on this value.
+    // 0° = direction faced when the AR session started, positive = LEFT,
+    // range (-180, 180]. Sign verified on device. See
+    // CalibrationManager.yawDegrees().
 }
 
 /// A durable record of each "Restart Segment" recovery, kept for later
