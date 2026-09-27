@@ -68,3 +68,6 @@ fastlane/test_output
 
 # Secrets
 .env
+
+# macOS Finder metadata
+.DS_Store
