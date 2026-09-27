@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-09-26T06:33:14+00:00",
+  "generatedAt": "2026-09-27T12:30:00+00:00",
   "sources": [
     "milk.har",
     "others.har"
   ],
-  "productCount": 142,
+  "productCount": 139,
   "products": [
     {
       "tcin": "13276204",
@@ -1509,37 +1509,6 @@
       ]
     },
     {
-      "tcin": "85759852",
-      "title": "Fresh Organic Bananas - 2lb - Good & Gather™",
-      "parentTitle": null,
-      "itemType": "Fruit",
-      "itemTypeId": "432322",
-      "buyURL": "https://www.target.com/p/organic-bananas-2lb-good-38-gather-8482/-/A-85759852",
-      "primaryImageURL": "https://target.scene7.com/is/image/Target/GUEST_8162d58e-0a2f-4aaf-88e8-a488bab34269",
-      "alternateImageURLs": [
-        "https://target.scene7.com/is/image/Target/GUEST_1144fdb2-2718-49b2-ba77-94c3e9a4e026",
-        "https://target.scene7.com/is/image/Target/GUEST_e2572da5-aeaf-4eea-86b8-f73aa981e0f1",
-        "https://target.scene7.com/is/image/Target/GUEST_4b508933-a94c-4cd1-9797-aa809754c614",
-        "https://target.scene7.com/is/image/Target/GUEST_92707c53-82d4-4876-b26f-f3026441be90",
-        "https://target.scene7.com/is/image/Target/GUEST_19cb8933-7635-433a-9486-0db10a2a3cfc",
-        "https://target.scene7.com/is/image/Target/GUEST_d03315c1-a062-43c1-8712-dd14e361c455"
-      ],
-      "imageAltText": "A bunch of yellow colored bananas with a purple label that reads \"Organic bananas.\"",
-      "currentPrice": 1.79,
-      "regularPrice": 1.79,
-      "formattedPrice": "$1.79",
-      "unitPrice": "$0.06",
-      "unitPriceSuffix": "/ounce",
-      "quantityAvailable": 10.0,
-      "soldOut": false,
-      "locations": [
-        {
-          "aisle": "G10",
-          "floor": "01"
-        }
-      ]
-    },
-    {
       "tcin": "85787732",
       "title": "Fresh Organic Gala Apples - 2lbs Bag - Good & Gather™",
       "parentTitle": null,
@@ -1563,10 +1532,6 @@
       "quantityAvailable": 10.0,
       "soldOut": false,
       "locations": [
-        {
-          "aisle": "G10",
-          "floor": "01"
-        },
         {
           "aisle": "G9",
           "floor": "01"
@@ -1605,10 +1570,6 @@
       "quantityAvailable": 10.0,
       "soldOut": false,
       "locations": [
-        {
-          "aisle": "G10",
-          "floor": "01"
-        },
         {
           "aisle": "G9",
           "floor": "01"
@@ -1672,10 +1633,6 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": "G10",
-          "floor": "01"
-        },
-        {
           "aisle": "G9",
           "floor": "01"
         },
@@ -1735,10 +1692,6 @@
       "quantityAvailable": 10.0,
       "soldOut": false,
       "locations": [
-        {
-          "aisle": "G10",
-          "floor": "01"
-        },
         {
           "aisle": "G9",
           "floor": "01"
@@ -1949,10 +1902,6 @@
       "quantityAvailable": 10.0,
       "soldOut": false,
       "locations": [
-        {
-          "aisle": "G10",
-          "floor": "01"
-        },
         {
           "aisle": "G13",
           "floor": "01"
@@ -3220,33 +3169,6 @@
       ]
     },
     {
-      "tcin": "94769016",
-      "title": "Large Hass Avocado - each",
-      "parentTitle": null,
-      "itemType": "Fruit",
-      "itemTypeId": "432322",
-      "buyURL": "https://www.target.com/p/large-hass-avocado-each/-/A-94769016",
-      "primaryImageURL": "https://target.scene7.com/is/image/Target/GUEST_88b51085-0fbc-4dd2-bc85-558c5ad08e7d",
-      "alternateImageURLs": [
-        "https://target.scene7.com/is/image/Target/GUEST_52f1e625-584e-46c9-8562-2b2a16828cb2",
-        "https://target.scene7.com/is/image/Target/GUEST_a93d3065-9ffd-47f4-b4b7-f432fa5ba6c7"
-      ],
-      "imageAltText": null,
-      "currentPrice": 1.19,
-      "regularPrice": 1.19,
-      "formattedPrice": "$1.19",
-      "unitPrice": null,
-      "unitPriceSuffix": null,
-      "quantityAvailable": 10.0,
-      "soldOut": false,
-      "locations": [
-        {
-          "aisle": "G10",
-          "floor": "01"
-        }
-      ]
-    },
-    {
       "tcin": "13435602",
       "title": "Laura's Lean Beef 96/4 Ground Beef - 1lb",
       "parentTitle": null,
@@ -3655,35 +3577,6 @@
       "locations": [
         {
           "aisle": "G37",
-          "floor": "01"
-        }
-      ]
-    },
-    {
-      "tcin": "88042911",
-      "title": "Organic Hass Avocados - 4ct - Good & Gather™",
-      "parentTitle": null,
-      "itemType": "Fruit",
-      "itemTypeId": "432322",
-      "buyURL": "https://www.target.com/p/organic-hass-avocados-4ct-good-38-gather-8482/-/A-88042911",
-      "primaryImageURL": "https://target.scene7.com/is/image/Target/GUEST_acd74aaa-e0c0-4070-8208-c03de9999a25",
-      "alternateImageURLs": [
-        "https://target.scene7.com/is/image/Target/GUEST_bc03abb4-fc8d-4ca8-8c0b-bf7e395f3385",
-        "https://target.scene7.com/is/image/Target/GUEST_19cb8933-7635-433a-9486-0db10a2a3cfc",
-        "https://target.scene7.com/is/image/Target/GUEST_0ffbc6cf-2f8d-4804-b809-279fc4b74be5",
-        "https://target.scene7.com/is/image/Target/GUEST_d03315c1-a062-43c1-8712-dd14e361c455"
-      ],
-      "imageAltText": null,
-      "currentPrice": 4.99,
-      "regularPrice": 4.99,
-      "formattedPrice": "$4.99",
-      "unitPrice": "$1.25",
-      "unitPriceSuffix": "/count",
-      "quantityAvailable": 0.0,
-      "soldOut": false,
-      "locations": [
-        {
-          "aisle": "G10",
           "floor": "01"
         }
       ]

@@ -127,6 +127,8 @@ final class RouteNavigator {
     /// The map direction last walked, so a new plan can start with the right turn.
     @ObservationIgnored private var heading: SIMD2<Double>?
     @ObservationIgnored private var hasWarned = false
+    /// Said before the first instruction: the items the route can't take the user to.
+    @ObservationIgnored private var skippedNote: String?
     /// Items whose stop was skipped. Left out when planning again.
     @ObservationIgnored private var skipped: Set<String> = []
 
@@ -161,7 +163,14 @@ final class RouteNavigator {
             tracker.start()
             self.tracker = tracker
         }
-        follow(RoutePlanner(map: map).plan(for: remainingItems()), from: position)
+        let plan = RoutePlanner(map: map).plan(for: remainingItems())
+        let skipped = plan.unmapped.map(\.name) + plan.unlocated
+        if !skipped.isEmpty {
+            let names = ListFormatter.localizedString(byJoining: skipped)
+            skippedNote = "\(names) \(skipped.count == 1 ? "isn't" : "aren't") in this store, so I'll skip "
+                + (skipped.count == 1 ? "it." : "them.")
+        }
+        follow(plan, from: position)
     }
 
     func stop() {
@@ -369,6 +378,8 @@ final class RouteNavigator {
     // MARK: Words
 
     private func say(_ text: String, haptic: WatchHaptic?) {
+        let text = skippedNote.map { "\($0) \(text)" } ?? text
+        skippedNote = nil
         instruction = text
         announce(text, haptic)
     }

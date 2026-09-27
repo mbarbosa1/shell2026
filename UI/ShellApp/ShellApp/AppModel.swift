@@ -151,8 +151,20 @@ final class AppModel {
     // MARK: Navigation
 
     /// What's left on the list, for the route planner.
+    /// An item whose aisle isn't on the map (one the store doesn't have, like G10, saved on the item
+    /// before the catalog was fixed) goes to another spot its product is stocked at instead, when
+    /// one is on the map. Otherwise the route skips it and says so.
     var routeItems: [RoutePlanner.Item] {
-        items.filter { !$0.isCollected }.map { RoutePlanner.Item(name: $0.name, location: $0.location) }
+        let stops = StoreMap.target.stops
+        return items.filter { !$0.isCollected }.map { item in
+            var location = item.location
+            if let saved = location, stops[saved.uppercased()] == nil,
+               let spot = product(for: item)?.locations.sorted(by: { ($0.block, $0.aisle) < ($1.block, $1.aisle) })
+                   .map(\.label).first(where: { stops[$0] != nil }) {
+                location = spot
+            }
+            return RoutePlanner.Item(name: item.name, location: location)
+        }
     }
 
     /// "Start shopping", from the button or the voice agent. Links anything not matched to the

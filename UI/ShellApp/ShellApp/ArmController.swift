@@ -27,14 +27,21 @@ final class ArmController {
     /// How far "left" and "right" turn from `panAhead`, the same amount both ways. Make it
     /// negative if left and right come out swapped.
     static let panToSide = 45
+    /// Tilt angle with the phone level. Up and down are measured from here.
+    static let tiltLevel = 90
+    /// How far the phone may tilt up, and the same amount down.
+    static let tiltToEdge = 30
     /// Phone facing straight ahead, level.
-    static let home = Pose(pan: panAhead, tilt: 90)
+    static let home = Pose(pan: panAhead, tilt: tiltLevel)
     /// Pan angles that face the shelf on the user's left and right.
     static let panFacingLeft = panAhead + panToSide
     static let panFacingRight = panAhead - panToSide
-    /// Keep `panAhead ± panToSide` inside this, or one side gets cut short and they're uneven.
-    static let panRange = 25...155
-    static let tiltRange = 60...120
+    /// How far the arm may ever turn, the same both ways: no further than facing a shelf, so
+    /// following a product can't drive it into the right side's end of travel. Must stay within
+    /// the firmware's 20–160.
+    static let panRange = (panAhead - panToSide)...(panAhead + panToSide)
+    /// How far the arm may ever tilt: `tiltToEdge` up and the same down.
+    static let tiltRange = (tiltLevel - tiltToEdge)...(tiltLevel + tiltToEdge)
     /// True when the two tilt servos face each other, so tilting up means one angle goes up and
     /// the other goes down (tilt1 = 180 - tilt2). False when they turn the same way (tilt1 = tilt2).
     /// Check with the Serial Monitor test: whichever setting tilts the clamp without twisting it.
@@ -92,7 +99,7 @@ final class ArmController {
     func sweepPoses(facing side: StoreMap.Side) -> [Pose] {
         let middle = Self.pan(facing: side)
         return [-20, 0, 20].flatMap { panOffset in
-            [90, 70, 110].map { tilt in Pose(pan: middle + panOffset, tilt: tilt) }
+            [0, -20, 20].map { tiltOffset in Pose(pan: middle + panOffset, tilt: Self.tiltLevel + tiltOffset) }
         }
     }
 
