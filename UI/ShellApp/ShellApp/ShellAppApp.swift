@@ -17,13 +17,19 @@ struct ShellAppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(model)
-                .preferredColorScheme(.dark)
-                 // iOS posts this whenever VoiceOver is switched on or off.
-                .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
-                    Task { await model.voiceOverChanged() }
+            Group {
+                if model.hasOnboarded {
+                    RootView()
+                } else {
+                    OnboardingView()
                 }
+            }
+            .environment(model)
+            .preferredColorScheme(.dark)
+            // iOS posts this whenever VoiceOver is switched on or off.
+            .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+                Task { await model.voiceOverChanged() }
+            }
         }
         .modelContainer(container)
     }

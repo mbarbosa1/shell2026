@@ -171,6 +171,38 @@ final class AppModel {
         return try? context.fetch(descriptor).first
     }
 
+ // MARK: Onboarding
+
+    /// Saved on the phone, so onboarding only shows on first launch.
+    var hasOnboarded = UserDefaults.standard.bool(forKey: "hasOnboarded") {
+        didSet { UserDefaults.standard.set(hasOnboarded, forKey: "hasOnboarded") }
+    }
+    /// Which onboarding page is showing. The buttons and the voice agent both change it.
+    var onboardingPage = 0
+
+    /// Moves to an onboarding page and returns what the voice agent should say.
+    func showOnboardingPage(_ index: Int) -> (message: String, isError: Bool) {
+        guard !hasOnboarded else { return ("Onboarding is already finished.", true) }
+        let pages = OnboardingPage.all
+        guard pages.indices.contains(index) else {
+            return (index < 0
+                ? "This is already the first page."
+                : "This is the last page. The user can say “get started” to finish.", true)
+        }
+        onboardingPage = index
+        return ("Now on page \(index + 1) of \(pages.count). Read this to the user: \(pages[index].spoken)", false)
+    }
+
+    func finishOnboarding() {
+        hasOnboarded = true
+    }
+
+    /// Demo helper: shows onboarding again from the first page.
+    func restartOnboarding() {
+        onboardingPage = 0
+        hasOnboarded = false
+    }
+    
     // MARK: Text for the agent
 
     /// The current list as text: "List 3 (open, started September 26): Bananas (3 bananas · Fresh produce), …".
