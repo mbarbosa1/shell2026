@@ -20,6 +20,12 @@
 			path = ShellApp;
 			sourceTree = "<group>";
 		};
+		5A1000000000000000000020 /* SwiftData */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = SwiftData;
+			path = ../../Scripts/SwiftData;
+			sourceTree = "<group>";
+		};
 		5A1000000000000000000021 /* Data */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			name = Data;
@@ -44,6 +50,7 @@
 			isa = PBXGroup;
 			children = (
 				5A1000000000000000000002 /* ShellApp */,
+				5A1000000000000000000020 /* SwiftData */,
 				5A1000000000000000000021 /* Data */,
 				5A1000000000000000000005 /* Products */,
 			);
@@ -74,6 +81,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				5A1000000000000000000002 /* ShellApp */,
+				5A1000000000000000000020 /* SwiftData */,
 				5A1000000000000000000021 /* Data */,
 			);
 			name = ShellApp;

@@ -11,19 +11,19 @@ target.com and loads it into SwiftData.
 | File | What it does |
 |---|---|
 | `extract_har.py` | Reads HARs (Python stdlib only), merges every Redsky API response by TCIN, writes `output/products.json`. |
-| `../UI/ShellApp/ShellApp/Catalog/Product.swift` | `@Model` `Product` (with `brand` and `size` from the title) and `StoreLocation` (aisle/block/floor, one-to-many). |
-| `../UI/ShellApp/ShellApp/Catalog/ProductDTO.swift` | Codable mirror of `products.json`. |
-| `../UI/ShellApp/ShellApp/Catalog/ProductImporter.swift` | Upserts `products.json` into a `ModelContext` (re-import updates, never duplicates); `importIfChanged` reloads on launch when the file changes. |
+| `SwiftData/Product.swift` | `@Model` `Product` (with `brand` and `size` from the title) and `StoreLocation` (aisle/block/floor, one-to-many). |
+| `SwiftData/ProductDTO.swift` | Codable mirror of `products.json`. |
+| `SwiftData/ProductImporter.swift` | Upserts `products.json` into a `ModelContext` (re-import updates, never duplicates); `importIfChanged` reloads on launch when the file changes. |
 | `verify_import.swift` | Imports into an in-memory store and prints samples (needs full Xcode). |
 | `verify_decode.swift` | Decodes `products.json` with the DTOs (works with Command Line Tools). |
 
 ## Using it in the app
 
 `ShellApp/ShellApp.xcodeproj` (repo root) already uses these files directly: it compiles
-`UI/ShellApp/ShellApp/Catalog/*.swift` and bundles `output/products.json`, and re-imports on every launch, so
+`SwiftData/*.swift` and bundles `output/products.json`, and re-imports on every launch, so
 running `./run.sh` then rebuilding the app picks up new data. To use them in another project:
 
-1. Drag the three files in `UI/ShellApp/ShellApp/Catalog/` and `output/products.json` into your Xcode target.
+1. Drag the three files in `SwiftData/` and `output/products.json` into your Xcode target.
 2. Register the models and seed on launch:
 
 ```swift

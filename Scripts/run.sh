@@ -26,10 +26,10 @@ fi
 
 if xcrun --find xcodebuild >/dev/null 2>&1 && [ "$(xcode-select -p)" != /Library/Developer/CommandLineTools ]; then
     echo "Verifying SwiftData import (in-memory store)..."
-    swiftc "${swift_flags[@]}" ../UI/ShellApp/ShellApp/Catalog/*.swift verify_import.swift -o .build/verify_import
+    swiftc "${swift_flags[@]}" SwiftData/*.swift verify_import.swift -o .build/verify_import
     .build/verify_import output/products.json
 else
     echo "Full Xcode not selected; SwiftData macros unavailable. Verifying JSON decoding only..."
-    swiftc "${swift_flags[@]}" ../UI/ShellApp/ShellApp/Catalog/ProductDTO.swift verify_decode.swift -o .build/verify_decode
+    swiftc "${swift_flags[@]}" SwiftData/ProductDTO.swift verify_decode.swift -o .build/verify_decode
     .build/verify_decode output/products.json
 fi

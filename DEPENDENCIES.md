@@ -51,7 +51,7 @@ black there.
 |---|---|
 | `extract_har.py` | Python 3, standard library only |
 | `run.sh` | bash, Python 3, `swiftc` from Xcode |
-| `UI/ShellApp/ShellApp/Catalog/*.swift`, `verify_import.swift` | Full Xcode (SwiftData macros) |
+| `SwiftData/*.swift`, `verify_import.swift` | Full Xcode (SwiftData macros) |
 | `verify_decode.swift` | Works with Command Line Tools alone |
 
 ```bash

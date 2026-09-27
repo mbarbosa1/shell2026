@@ -12,7 +12,7 @@
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A10000000000000000000010 /* ShellApp */ = {isa = PBXFileSystemSynchronizedRootGroup; path = ShellApp; sourceTree = "<group>"; };
-		A10000000000000000000011 /* SwiftData */ = {isa = PBXFileSystemSynchronizedRootGroup; name = SwiftData; path = ../UI/ShellApp/ShellApp/Catalog; sourceTree = "<group>"; };
+		A10000000000000000000011 /* SwiftData */ = {isa = PBXFileSystemSynchronizedRootGroup; name = SwiftData; path = ../Scripts/SwiftData; sourceTree = "<group>"; };
 		A10000000000000000000012 /* Data */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Data; path = ../Scripts/output; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 

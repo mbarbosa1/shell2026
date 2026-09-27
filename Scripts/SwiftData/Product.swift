@@ -43,18 +43,20 @@ final class Product {
         self.alternateImageURLs = []
     }
 
-    var isOnSale: Bool {
-        guard let currentPrice, let regularPrice else { return false }
-        return currentPrice < regularPrice
-    }
-
     /// Main location, the first by block then aisle. Some products are stocked in several spots.
     var primaryLocation: StoreLocation? {
         locations.sorted { ($0.block, $0.aisle) < ($1.block, $1.aisle) }.first
     }
 
+    var isOnSale: Bool {
+        guard let currentPrice, let regularPrice else { return false }
+        return currentPrice < regularPrice
+    }
+
     /// Primary location as shown in the Target app, e.g. "G44".
-    var locationLabel: String? { primaryLocation?.label }
+    var locationLabel: String? {
+        locations.sorted { ($0.block, $0.aisle) < ($1.block, $1.aisle) }.first?.label
+    }
 }
 
 /// One aisle/block/floor position of a product in the store.
