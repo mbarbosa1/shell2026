@@ -65,6 +65,8 @@ final class AppModel {
     let camera: CameraService
     /// Looks for the list's items with the camera at each stop.
     let scanner = ItemScanner()
+    /// PersonDistance: how far the product the shopper said Yes to is from the camera.
+    let range: ProductRangeSession
     /// Baseline trials, in Debug builds with tester mode on (see the Trials screen).
     let trials = TrialRecorder()
     /// Camera images for a tester's test scan, which runs without navigation.
@@ -97,13 +99,14 @@ final class AppModel {
         self.cartDevice = cartDevice
         self.watch = watch
         pickup = PickupGuide(arm: ArmController(cart: cartDevice), watch: watch, session: camera.session)
+        range = ProductRangeSession(session: camera.session)
         currentList = Self.openList(in: container.mainContext)
         highlightedItemID = currentList.sortedItems.last?.id
         refresh()
         voice = VoiceAgent(model: self)
         scanner.announce = { [weak self] text, haptic in self?.announce(text, haptic: haptic) }
         scanner.found = { [weak self] id in self?.putInCart(id) }
-        scanner.depth = ProductDepthEstimator(session: camera.session)
+        scanner.range = range
         scanner.trials = trials
         connectCartDevice()
     }
@@ -223,6 +226,8 @@ final class AppModel {
 
     private func closeCamera() {
         pickup.stop()
+        // Before the pause: turning LiDAR off re-runs the session, which would restart it.
+        range.stop()
         camera.stop()
         isCameraOpen = false
     }

@@ -24,9 +24,6 @@ final class ItemScanner {
     private(set) var question: String?
     /// The latest hint, e.g. "Move closer to the item". Nil when there's nothing to fix.
     private(set) var hint: String?
-    /// Meters from the phone to the product in view, from PersonDistance, for the camera screen.
-    /// Nil with no single product in view or no reading. Only shown; nothing is decided by it.
-    private(set) var objectMeters: Double?
 
     /// How far past the end of a stop's lane the camera keeps looking.
     static let margin = 1.5
@@ -36,8 +33,9 @@ final class ItemScanner {
     @ObservationIgnored var announce: (String, WatchHaptic?) -> Void = { _, _ in }
     /// Puts the list item with this id in the cart. Set by `AppModel`.
     @ObservationIgnored var found: (UUID) -> Void = { _ in }
-    /// Measures `objectMeters`. Set by `AppModel`.
-    @ObservationIgnored var depth: ProductDepthEstimator?
+    /// PersonDistance: follows the product asked about, and measures its distance once the shopper
+    /// says Yes (never before). Set by `AppModel`.
+    @ObservationIgnored var range: ProductRangeSession?
     /// Baseline trials in tester mode: every item scan is one. It also holds the OCR language
     /// correction setting the next item uses. Set by `AppModel`.
     @ObservationIgnored var trials: TrialRecorder?
@@ -97,11 +95,14 @@ final class ItemScanner {
         question = nil
         if yes {
             trials?.finish(.accepted)
+            // Before moving on, which stops recognition for this item.
+            range?.measure(target.listItemID)
             Task { await coordinator.acceptInsight() }
             // A test scan only measures recognition; the list stays as it is.
             if mode == .testScan { stopTarget() } else { found(target.listItemID) }
         } else {
             trials?.rejected()
+            range?.stop()
             Task { await coordinator.rejectInsight() }
             announce("Okay, still looking for \(target.name).", nil)
         }
@@ -190,7 +191,9 @@ final class ItemScanner {
         coordinator = nil
         question = nil
         hint = nil
-        objectMeters = nil
+        // Asked about but left without an answer: stop following it. After a Yes it's measuring,
+        // and carries on while the next item is looked for.
+        if range?.status == .following { range?.stop() }
         spokenHint = nil
         spokenAt = -.infinity
         toldToMoveOn = false
@@ -208,6 +211,7 @@ final class ItemScanner {
             trials?.asked(update.result?.matchLevel)
             question = prompt
             hint = nil
+            follow(update, imageSize: imageSize)
             announce(prompt, .arrived)
             return
         }
@@ -218,15 +222,9 @@ final class ItemScanner {
         }
         // Frames that weren't looked at (in between, or detection off) carry no result.
         guard update.gate.isDetectionActive, update.result != nil else {
-            if !update.gate.isDetectionActive {
-                hint = nil
-                objectMeters = nil
-            }
+            if !update.gate.isDetectionActive { hint = nil }
             return
         }
-        objectMeters = depth?.range(
-            focused: update.focusedObject, region: update.assessment?.objectRegion,
-            objectCount: update.assessment?.objectBoxes.count ?? 0, imageSize: imageSize)
         hint = update.guidance?.message
         guard let guidance = update.guidance, hint != spokenHint, time - spokenAt >= Self.hintInterval else {
             if hint == nil { spokenHint = nil }
@@ -235,6 +233,16 @@ final class ItemScanner {
         spokenHint = hint
         spokenAt = time
         announce(guidance.message, guidance.haptic)
+    }
+
+    /// Hands the product being asked about to PersonDistance to follow until the answer. Only one
+    /// product: the one whose text matched when several were in view, or the only one in view,
+    /// never the region around several. With neither, a Yes has nothing to measure.
+    private func follow(_ update: RecognitionUpdate, imageSize: CGSize) {
+        let objects = update.assessment?.objectBoxes.count ?? 0
+        guard let target,
+              let box = update.focusedObject ?? (objects == 1 ? update.assessment?.objectRegion : nil) else { return }
+        range?.follow(target.listItemID, box: box, imageSize: imageSize)
     }
 }
 

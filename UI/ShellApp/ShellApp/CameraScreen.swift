@@ -31,7 +31,11 @@ struct CameraScreen: View {
         .overlay(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 8) {
                 if let target = model.scanner.target {
-                    ScanTargetPill(name: target.name, meters: model.scanner.objectMeters)
+                    ScanTargetPill(name: target.name)
+                }
+                if model.range.status == .measuring,
+                   let item = model.items.first(where: { $0.id == model.range.item }) {
+                    ProductRangePill(name: item.name, meters: model.range.sample?.meters)
                 }
                 #if DEBUG
                 if model.trials.isEnabled, model.scanner.target != nil {
@@ -60,12 +64,37 @@ struct CameraScreen: View {
     }
 }
 
-/// What the camera is looking for at this stop, and how far the object in view is from the phone.
-/// A second check for anyone who can see some of the screen: it's read when VoiceOver lands on
-/// it, but never announced.
+/// What the camera is looking for at this stop. A second check for anyone who can see some of the
+/// screen: it's read when VoiceOver lands on it, but never announced.
 private struct ScanTargetPill: View {
     let name: String
-    /// Nil with no object in view.
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Looking for")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+            Text(name)
+                .font(.headline)
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.14))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Looking for \(name)")
+    }
+}
+
+/// How far the product the shopper said Yes to is from the phone's camera (PersonDistance), while
+/// it's measured. Read when VoiceOver lands on it, never announced; nothing is decided from it.
+private struct ProductRangePill: View {
+    let name: String
+    /// Nil with no valid reading right now.
     let meters: Double?
 
     /// "1.2"
@@ -76,7 +105,7 @@ private struct ScanTargetPill: View {
     var body: some View {
         HStack(alignment: .lastTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Looking for")
+                Text("From camera")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                 Text(name)
@@ -97,8 +126,8 @@ private struct ScanTargetPill: View {
         }
         .animation(.snappy, value: figure)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Looking for \(name)")
-        .accessibilityValue(figure.map { "\($0) meters away" } ?? "No object in view")
+        .accessibilityLabel("\(name), distance from the camera")
+        .accessibilityValue(figure.map { "\($0) meters" } ?? "No reading")
     }
 }
 
