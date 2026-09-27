@@ -399,8 +399,28 @@ final class AppModel {
         mostCommonItems = Self.rank((try? context.fetch(FetchDescriptor<GroceryItem>())) ?? [])
     }
 
+    /// The item the user means. Mira reads back the catalog product's name ("Whole Milk") when an
+    /// item is added as "milk", so the user may say either. Tried in order:
+    /// 1. The exact name, ignoring case.
+    /// 2. The same words, ignoring singular and plural ("banana" finds "Bananas").
+    /// 3. The same words as the linked product's name ("whole milk" finds "milk").
+    /// 4. The one item whose name or product name has every word said. Two or more is too
+    ///    unsure to act on, so nothing is returned.
     private func item(named name: String) -> GroceryItem? {
-        items.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+        if let exact = items.first(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+            return exact
+        }
+        let said = ProductMatcher.words(name)
+        guard !said.isEmpty else { return nil }
+        func productWords(_ item: GroceryItem) -> [String] {
+            product(for: item).map { ProductMatcher.words(ProductMatcher.ownName(of: $0.title)) } ?? []
+        }
+        if let item = items.first(where: { ProductMatcher.words($0.name) == said }) { return item }
+        if let item = items.first(where: { productWords($0) == said }) { return item }
+        let containing = items.filter { item in
+            Set(said).isSubset(of: ProductMatcher.words(item.name)) || Set(said).isSubset(of: productWords(item))
+        }
+        return containing.count == 1 ? containing[0] : nil
     }
 
     /// The newest open list, or a new one numbered after the last list.
