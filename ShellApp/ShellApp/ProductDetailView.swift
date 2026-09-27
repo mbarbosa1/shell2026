@@ -39,7 +39,7 @@ struct ProductDetailView: View {
                 ForEach(product.locations.sorted { ($0.block, $0.aisle) < ($1.block, $1.aisle) }) { location in
                     HStack {
                         LocationBadge(label: location.label)
-                        Text("Aisle \(location.label)")
+                        Text("Block \(location.block), Aisle \(location.aisle)")
                         Spacer()
                         Text("Floor \(location.floor)").foregroundStyle(.secondary)
                     }

@@ -4,6 +4,8 @@
 
 This checklist records the current local implementation. Checked items are complete within the scope stated. The architecture and examples below also describe planned work; they are not evidence that the entire recognition pipeline is complete.
 
+> **September 26, 2026 (user direction):** `ItemRecognitionDemo/` was deleted from the `itemsCV` branch after merging `main`; `UI/` and `ShellApp/` follow `main`. References to the demo below record past verification and remain for history; it is recoverable from commit `b5d337b`. No app in the branch currently runs the recognition pipeline on a phone.
+
 ### Complete
 
 - [x] Create the native Swift `ItemRecognition` library package with iOS 17+ and macOS 14+ support and an XCTest target.
