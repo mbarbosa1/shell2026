@@ -17,19 +17,19 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		5A1000000000000000000002 /* ShellApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = ShellApp;
+			path = UI/ShellApp/ShellApp;
 			sourceTree = "<group>";
 		};
 		5A1000000000000000000020 /* SwiftData */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			name = SwiftData;
-			path = ../../Scripts/SwiftData;
+			path = Scripts/SwiftData;
 			sourceTree = "<group>";
 		};
 		5A1000000000000000000021 /* Data */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			name = Data;
-			path = ../../Scripts/output;
+			path = Scripts/output;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */

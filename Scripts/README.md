@@ -28,7 +28,7 @@ remain in the existing `Product` model; its schema is unchanged.
 The example below is the existing independent database-browser demo, not the
 recognition integration or the authoritative UI for catalog data.
 
-`ShellApp/ShellApp.xcodeproj` (repo root) already uses these files directly: it compiles
+`ShellApp.xcodeproj` (repo root) already uses these files directly: it compiles
 `SwiftData/*.swift` and bundles `output/products.json`, and re-imports on every launch, so
 running `./run.sh` then rebuilding the app picks up new data. To use them in another project:
 
