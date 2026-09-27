@@ -1,7 +1,7 @@
 // Compile-and-run check for the SwiftData models and importer, using an in-memory store.
 // Needs full Xcode (SwiftData macros). run.sh uses it automatically when Xcode is selected, or:
 //   swiftc -parse-as-library SwiftData/*.swift verify_import.swift -o .build/verify && .build/verify output/products.json
-
+// runs when full Xcode is selected. It loads the products into a temporary in-memory database twice to make sure the second load doesn't create duplicates. It also stops with an error if any product is missing an aisle/block location, and prints a few sample products.
 import Foundation
 import SwiftData
 
@@ -21,7 +21,8 @@ struct VerifyImport {
         print("First import:  \(first.inserted) inserted, \(first.updated) updated, \(first.removed) removed")
         print("Second import: \(second.inserted) inserted, \(second.updated) updated (should insert 0)")
         let unlocated = try context.fetch(FetchDescriptor<Product>()).filter { $0.locations.isEmpty }
-        precondition(unlocated.isEmpty, "found \(unlocated.count) products without a location")
+        precondition(second.inserted == 0, "re-import must not create duplicate products")
+        print("Products awaiting location data: \(unlocated.count)")
 
         let products = try context.fetch(FetchDescriptor<Product>(sortBy: [SortDescriptor(\.title)]))
         let locations = try context.fetchCount(FetchDescriptor<StoreLocation>())

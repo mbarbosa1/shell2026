@@ -26,13 +26,40 @@ enum ProductImporter {
         }
     }
 
+    /// Bump when `apply` starts filling in something new (like `brand` and `size`), so products
+    /// saved by an older build are imported again.
+    static let revision = 2
+
+    /// Imports the bundled `products.json` on first launch, and again whenever its `generatedAt`
+    /// or `revision` changes (after `Scripts/run.sh` and a rebuild). Call on app launch.
+    static func importIfChanged(into context: ModelContext, resource: String = "products") {
+        let versionKey = "productCatalogGeneratedAt"
+        guard let url = Bundle.main.url(forResource: resource, withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(ProductFileDTO.self, from: data)
+        else {
+            print("📦 Product catalog: \(resource).json is missing from the app bundle")
+            return
+        }
+        let version = "\(file.generatedAt ?? "") r\(revision)"
+        let isEmpty = ((try? context.fetchCount(FetchDescriptor<Product>())) ?? 0) == 0
+        guard isEmpty || UserDefaults.standard.string(forKey: versionKey) != version else { return }
+        do {
+            let result = try importProducts(from: data, into: context)
+            UserDefaults.standard.set(version, forKey: versionKey)
+            print("📦 Product catalog loaded (\(version)): \(result.inserted) new, \(result.updated) updated, \(result.removed) removed")
+        } catch {
+            print("📦 Product catalog failed to load: \(error)")
+        }
+    }
+
     @discardableResult
     static func importProducts(from url: URL, into context: ModelContext) throws -> Result {
         try importProducts(from: Data(contentsOf: url), into: context)
     }
 
     @discardableResult
-    static func importProducts(from data: Data, into context: ModelContext) throws -> Result {
+    static func importProducts(from data: Data, into context: ModelContext, save: Bool = true) throws -> Result {
         let file = try JSONDecoder().decode(ProductFileDTO.self, from: data)
 
         let existing = try context.fetch(FetchDescriptor<Product>())
@@ -40,14 +67,8 @@ enum ProductImporter {
         var result = Result()
 
         for dto in file.products {
-            // Only products with an aisle/block location belong in the database.
-            guard dto.hasLocation else {
-                if let stale = byTcin.removeValue(forKey: dto.tcin) {
-                    context.delete(stale)
-                    result.removed += 1
-                }
-                continue
-            }
+            // HARs are partial captures. Missing location data must not delete
+            // products, their stable identity, or manually configured rules.
             let product: Product
             if let found = byTcin[dto.tcin] {
                 product = found
@@ -61,21 +82,17 @@ enum ProductImporter {
             apply(dto, to: product, in: context)
         }
 
-        // Drop anything imported earlier that has no location.
-        for product in byTcin.values where product.locations.isEmpty {
-            context.delete(product)
-            result.removed += 1
-        }
-
-        try context.save()
+        if save { try context.save() }
         return result
     }
 
     private static func apply(_ dto: ProductDTO, to p: Product, in context: ModelContext) {
-        p.title = dto.title ?? dto.tcin
+        if let title = dto.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { p.title = title }
         p.parentTitle = dto.parentTitle
         p.itemType = dto.itemType
         p.itemTypeId = dto.itemTypeId
+        p.brand = brand(fromTitle: p.title)
+        p.size = size(fromTitle: p.title)
         p.buyURL = dto.buyURL.flatMap(URL.init(string:))
         p.primaryImageURL = dto.primaryImageURL.flatMap(URL.init(string:))
         p.alternateImageURLs = (dto.alternateImageURLs ?? []).compactMap(URL.init(string:))
@@ -88,10 +105,51 @@ enum ProductImporter {
         p.quantityAvailable = dto.quantityAvailable
         p.soldOut = dto.soldOut
 
-        for old in p.locations { context.delete(old) }
-        p.locations = (dto.locations ?? []).compactMap { loc in
-            guard let aisle = loc.aisle, let block = loc.block else { return nil }
-            return StoreLocation(aisle: aisle, block: block, floor: loc.floor ?? "01")
+        // Preserve existing location identities. An incomplete capture is not a
+        // removal instruction; explicit location retirement needs a separate workflow.
+        for loc in dto.locations ?? [] {
+            guard let aisle = loc.aisleNumber, let block = loc.block else { continue }
+            let floor = loc.floor ?? "01"
+            if !p.locations.contains(where: { $0.aisle == aisle && $0.block == block && $0.floor == floor }) {
+                p.locations.append(StoreLocation(aisle: aisle, block: block, floor: floor))
+            }
         }
+    }
+
+    // MARK: Brand and size from the title
+
+    // Target's captures have no brand or size fields, so they come from the title:
+    // "Banana Nut Granola - 12oz - Good & Gather™" → size "12oz", brand "Good & Gather™".
+
+    /// A leading amount and unit: "12oz", "1gal", "0.8-1.4lbs", "15oz/8ct", "1pt".
+    private static let sizePattern = #"^\d[\d./-]*\s*(fl\.? ?oz|oz|gal|ct|lbs?|pk|ml|l|g|kg|qt|pt|dozen|count)\b"#
+
+    private static func titleParts(_ title: String) -> [String] {
+        title.replacingOccurrences(of: " – ", with: " - ")
+            .components(separatedBy: " - ")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func isSize(_ text: String) -> Bool {
+        text.range(of: sizePattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    static func size(fromTitle title: String) -> String? {
+        let parts = titleParts(title).dropFirst()
+        if let size = parts.first(where: isSize) { return size }
+        if parts.contains(where: { $0.caseInsensitiveCompare("each") == .orderedSame }) { return "each" }
+        if parts.contains(where: { $0.localizedCaseInsensitiveContains("price per lb") }) { return "per lb" }
+        return nil
+    }
+
+    /// Only the store brand Target puts last; name brands lead the title and can't be split off reliably.
+    static func brand(fromTitle title: String) -> String? {
+        let parts = titleParts(title)
+        guard parts.count >= 3, let last = parts.last else { return nil }
+        let brand = last.components(separatedBy: ":")[0]
+            .replacingOccurrences(of: "(Packaging May Vary)", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        guard !brand.isEmpty, !isSize(brand), !brand.localizedCaseInsensitiveContains("price per") else { return nil }
+        return brand
     }
 }

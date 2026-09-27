@@ -172,7 +172,7 @@ final class VoiceAgent {
 
         case "add_grocery_item", "add_item":
             guard let name else { return ("Missing parameter: name.", true) }
-            model.addItem(GroceryItem(
+            let item = GroceryItem(
                 name: name,
                 brand: Self.text(parameters["brand"]),
                 label: Self.text(parameters["label"]),
@@ -180,8 +180,15 @@ final class VoiceAgent {
                 quantity: Self.int(parameters["quantity"]) ?? 1,
                 aisle: Self.int(parameters["aisle"]),
                 block: Self.text(parameters["block"])?.uppercased()
-            ), source: .voice)
-            return ("Added \(name) to list \(model.currentList.number).", false)
+            )
+            model.addItem(item, source: .voice)
+            // Tell the user the product and price we picked, but not the aisle.
+            guard let product = model.product(for: item), let price = item.price else {
+                return ("Added \(name) to the list. The store's catalog doesn't have it, so there's no price.", false)
+            }
+            let size = product.size.map { ", \($0)" } ?? ""
+            return ("Added \(name) to the list: \(ProductMatcher.ownName(of: product.title))\(size), "
+                + "for \(price.formatted(.currency(code: "USD"))).", false)
 
         case "update_grocery_item", "update_item":
             guard let name else { return ("Missing parameter: name.", true) }
@@ -254,8 +261,7 @@ final class VoiceAgent {
 
         case "open_camera", "open_camera_or_close":
             // Only opens: the camera closes at the cashier or with the X on screen.
-            model.startShopping()
-            return ("Camera opened. Let's start shopping.", false)
+            return ("Camera opened. Let's start shopping." + Self.notInCatalog(model.startShopping()), false)
 
         case "analyze_current_frame":
             // No computer vision in the app yet, so say so instead of guessing a direction.
@@ -327,6 +333,11 @@ final class VoiceAgent {
         case let text as String: return ["true", "yes", "1"].contains(text.lowercased()) ? true : ["false", "no", "0"].contains(text.lowercased()) ? false : nil
         default: return nil
         }
+    }
+
+    /// " Not in the store's catalog: whole milk, bread." or nothing when everything was found.
+    private static func notInCatalog(_ items: [GroceryItem]) -> String {
+        items.isEmpty ? "" : " Not in the store's catalog: \(items.map(\.name).joined(separator: ", "))."
     }
 
     /// The agent may send numbers as integers, decimals, or text.
