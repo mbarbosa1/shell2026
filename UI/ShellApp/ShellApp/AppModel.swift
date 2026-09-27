@@ -71,6 +71,10 @@ final class AppModel {
                 name: usual.name, brand: usual.brand, label: usual.label, size: usual.size,
                 aisle: usual.aisle, block: usual.block
             )
+            // Keep the product link, so the usual stays matched to the same catalog product.
+            item.tcin = usual.tcin
+            item.price = usual.price
+            item.floor = usual.floor
             insert(item, source: source)
             added.append(item)
         }
@@ -80,7 +84,7 @@ final class AppModel {
         confirmation = added.count == 1 ? "\(last.name) added to your list" : "\(added.count) usuals added to your list"
     }
 
-    // MARK: Voice agent
+    // SAVVY: Voice agent
 
     func setListening(_ isListening: Bool) async {
         await voice?.setListening(isListening)
@@ -217,8 +221,7 @@ final class AppModel {
         let rows = lists.map { list in
             let items = list.sortedItems.map { item in
                 "   • \(item.name) | quantity \(item.quantity) | label \(item.label ?? "nil") | brand \(item.brand ?? "nil")"
-                    + " | aisle \(item.aisle.map(String.init) ?? "nil") | block \(item.block ?? "nil")"
-                    + " | price \(item.price.map { String(format: "%.2f", $0) } ?? "nil") | tcin \(item.tcin ?? "nil") | in cart \(item.isCollected)"
+                    + " | aisle \(item.aisle.map(String.init) ?? "nil") | block \(item.block ?? "nil") | in cart \(item.isCollected)"
             }
             let header = "🗄️ List \(list.number) (\(list.isOpen ? "open" : "finished"), \(list.history.count) history events)"
             return ([header] + (items.isEmpty ? ["   (no items)"] : items)).joined(separator: "\n")
@@ -287,16 +290,17 @@ final class AppModel {
     }
 
     /// Groups items by name and brand and ranks them by how many lists they've been on,
-    /// then by how recently they were added. Uses the newest copy's label and size, and the
-    /// newest known location, so adding an item without one doesn't forget where it was.
+    /// then by how recently they were added. Uses the newest copy's label and size, the newest
+    /// known location, and the newest product link, so adding an item without one doesn't forget them.
     private static func rank(_ items: [GroceryItem]) -> [CommonItem] {
-        var groups: [String: (newest: GroceryItem, located: GroceryItem?, lists: Set<Int>)] = [:]
+        var groups: [String: (newest: GroceryItem, located: GroceryItem?, linked: GroceryItem?, lists: Set<Int>)] = [:]
         for item in items {
             guard let number = item.list?.number else { continue }
             let key = CommonItem.key(name: item.name, brand: item.brand)
-            var group = groups[key] ?? (item, nil, [])
+            var group = groups[key] ?? (item, nil, nil, [])
             if item.addedAt > group.newest.addedAt { group.newest = item }
             if item.location != nil, item.addedAt > (group.located?.addedAt ?? .distantPast) { group.located = item }
+            if item.tcin != nil, item.addedAt > (group.linked?.addedAt ?? .distantPast) { group.linked = item }
             group.lists.insert(number)
             groups[key] = group
         }
@@ -305,7 +309,8 @@ final class AppModel {
                 CommonItem(
                     id: key, name: group.newest.name, brand: group.newest.brand,
                     label: group.newest.label, size: group.newest.size,
-                    aisle: group.located?.aisle, block: group.located?.block,
+                    aisle: group.located?.aisle, block: group.located?.block, floor: group.located?.floor,
+                    tcin: group.linked?.tcin, price: group.linked?.price,
                     timesListed: group.lists.count, lastAdded: group.newest.addedAt
                 )
             }

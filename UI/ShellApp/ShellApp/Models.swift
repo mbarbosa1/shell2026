@@ -14,6 +14,8 @@ enum GroceryDatabase {
     ])
 
     static func container(inMemory: Bool = false) throws -> ModelContainer {
+        // Each configuration needs its own name. Unnamed ones count as the same configuration,
+        // and saving a grocery item then fails with "store does not contain the object's entity".
         let lists: ModelConfiguration
         let catalog: ModelConfiguration
         if inMemory {
@@ -21,8 +23,8 @@ enum GroceryDatabase {
             catalog = ModelConfiguration("Catalog", schema: catalogSchema, isStoredInMemoryOnly: true)
         } else {
             // The lists keep the file they've always used, so existing lists carry over.
-            lists = ModelConfiguration(schema: listSchema, url: .applicationSupportDirectory.appending(path: "default.store"))
-            catalog = ModelConfiguration(schema: catalogSchema, url: .applicationSupportDirectory.appending(path: "catalog.store"))
+            lists = ModelConfiguration("Lists", schema: listSchema, url: .applicationSupportDirectory.appending(path: "default.store"))
+            catalog = ModelConfiguration("Catalog", schema: catalogSchema, url: .applicationSupportDirectory.appending(path: "catalog.store"))
         }
         return try ModelContainer(for: schema, configurations: lists, catalog)
     }
@@ -37,6 +39,8 @@ protocol ItemDescribing {
     var quantity: Int { get }
     var aisle: Int? { get }
     var block: String? { get }
+    /// Shown on screen only; left out of `detail`, which the voice agent reads.
+    var price: Double? { get }
 }
 
 extension ItemDescribing {
@@ -196,6 +200,10 @@ struct CommonItem: ItemDescribing, Identifiable, Hashable {
     var quantity: Int { 1 }
     var aisle: Int?
     var block: String?
+    var floor: String?
+    /// The catalog product this usual was last matched to, carried onto new lists.
+    var tcin: String?
+    var price: Double?
     var timesListed: Int
     var lastAdded: Date
 
