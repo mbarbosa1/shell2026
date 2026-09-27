@@ -174,7 +174,25 @@ final class RouteNavigator {
             tracker.start()
             self.tracker = tracker
         }
-        follow(RoutePlanner(map: map).plan(for: remainingItems()), from: position)
+        let plan = RoutePlanner(map: map).plan(for: remainingItems())
+        // Nothing to walk to: every route starts and ends at the entrance, so this one would end
+        // the trip (and close the camera) before it began. Say why and leave the camera open.
+        guard !plan.stops.isEmpty || plan.path.count > 1 else {
+            self.plan = plan
+            legs = []
+            phase = .finished
+            say(Self.nothingToWalk(plan), haptic: nil)
+            return
+        }
+        follow(plan, from: position)
+    }
+
+    /// Why a route from the entrance has nowhere to go.
+    private static func nothingToWalk(_ plan: RoutePlanner.Plan) -> String {
+        let unplaced = plan.unlocated + plan.unmapped.map(\.name)
+        guard !unplaced.isEmpty else { return "There's nothing left on your list to get." }
+        return "I don't know where to find \(ListFormatter.localizedString(byJoining: unplaced)) in this store yet, "
+            + "so there's no route to walk. Add their store locations to the list."
     }
 
     func stop() {

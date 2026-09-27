@@ -19,11 +19,19 @@ final class PositionTracker: NSObject {
     private static let interval: TimeInterval = 0.1
     /// Camera images are passed on at most this often (30 a second; ARKit runs at 60).
     private static let frameInterval: TimeInterval = 1.0 / 30
+    /// Whether the lens is refocusing is asked at most this often. ARKit's camera runs in another
+    /// process, so each question is a call there; asked on every frame, they fail and fill the log
+    /// with `FigCaptureSourceRemote` errors.
+    private static let focusInterval: TimeInterval = 0.25
 
     private let session: ARSession
     private var lastSample: TimeInterval = 0
     private var lastFrame: TimeInterval = 0
     private var status: String?
+    /// ARKit's own camera, looked up once, and its latest refocusing answer.
+    private lazy var camera = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera
+    private var isFocusing = false
+    private var lastFocusCheck: TimeInterval = -.infinity
 
     /// `session` is `AppModel`'s; running and pausing it is up to `CameraService`.
     init(session: ARSession) {
@@ -58,8 +66,11 @@ extension PositionTracker: ARSessionDelegate {
             if let onFrame, time - lastFrame >= Self.frameInterval {
                 lastFrame = time
                 // ARKit's own camera, so a frame taken mid-refocus isn't counted as a clear look.
-                let camera = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera
-                onFrame(image, time, camera?.isAdjustingFocus ?? false)
+                if time - lastFocusCheck >= Self.focusInterval {
+                    lastFocusCheck = time
+                    isFocusing = camera?.isAdjustingFocus ?? false
+                }
+                onFrame(image, time, isFocusing)
             }
             switch state {
             case .normal:
