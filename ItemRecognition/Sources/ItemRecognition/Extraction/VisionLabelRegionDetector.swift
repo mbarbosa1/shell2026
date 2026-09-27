@@ -40,11 +40,13 @@ public struct VisionLabelRegionDetector: LabelRegionDetecting {
         let textHeight = minimumTextHeight
         return try await Task.detached(priority: .utility) {
             let rectangles = VNDetectRectanglesRequest()
+            rectangles.revision = VisionRevisions.rectangles
             rectangles.maximumObservations = 3
             rectangles.minimumConfidence = packageConfidence
             rectangles.minimumAspectRatio = 0.3
             rectangles.maximumAspectRatio = 1
             let text = VNDetectTextRectanglesRequest()
+            text.revision = VisionRevisions.textRectangles
             text.reportCharacterBoxes = false
             let handler = VNImageRequestHandler(cvPixelBuffer: image.pixelBuffer,
                                                 orientation: image.orientation, options: [:])

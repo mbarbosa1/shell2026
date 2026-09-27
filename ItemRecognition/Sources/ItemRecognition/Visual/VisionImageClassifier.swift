@@ -11,7 +11,7 @@ public actor VisionImageClassifier: VisualClassifying {
 
     public init() {
         let request = VNClassifyImageRequest()
-        request.revision = VNClassifyImageRequestRevision2
+        request.revision = VisionRevisions.classify
         self.request = request
     }
 

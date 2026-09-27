@@ -37,6 +37,7 @@ public actor VisionFrameAssessor: FrameAssessing {
         if let old, let oldTime, image.timestamp > oldTime, image.timestamp - oldTime < 1,
            let locatedAt, image.timestamp - locatedAt < 1 {
             let request = VNTrackObjectRequest(detectedObjectObservation: old)
+            request.revision = VisionRevisions.tracking
             request.trackingLevel = .accurate
             try sequence.perform([request], on: image.pixelBuffer, orientation: image.orientation)
             if let result = request.results?.first as? VNDetectedObjectObservation, result.confidence >= 0.6 {
@@ -45,6 +46,7 @@ public actor VisionFrameAssessor: FrameAssessing {
         }
         if observation == nil {
             let request = VNGenerateForegroundInstanceMaskRequest()
+            request.revision = VisionRevisions.foregroundMask
             let handler = VNImageRequestHandler(cvPixelBuffer: image.pixelBuffer, orientation: image.orientation, options: [:])
             try handler.perform([request])
             guard let mask = request.results?.first, !mask.allInstances.isEmpty else {

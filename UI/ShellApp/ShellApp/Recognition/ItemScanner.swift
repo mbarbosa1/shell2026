@@ -38,6 +38,9 @@ final class ItemScanner {
     @ObservationIgnored var found: (UUID) -> Void = { _ in }
     /// Measures `objectMeters`. Set by `AppModel`.
     @ObservationIgnored var depth: ProductDepthEstimator?
+    /// Whether OCR corrects words toward the dictionary. It can respell brands (Cheez-It), so the
+    /// baseline tries both. Applies from the next item.
+    @ObservationIgnored var languageCorrection = true
     @ObservationIgnored private var queue: [ScanTarget] = []
     /// Meters past the reference node, or nil before it; and whether tracking can be trusted.
     @ObservationIgnored private var progress: () -> (meters: Double?, reliable: Bool) = { (nil, false) }
@@ -86,8 +89,8 @@ final class ItemScanner {
     }
 
     /// A camera image from ARKit. The phone is mounted upright, so ARKit's landscape image is turned
-    /// a quarter turn right.
-    func receive(_ buffer: CVPixelBuffer, at time: TimeInterval) {
+    /// a quarter turn right. Frames taken while the lens refocuses aren't counted as evidence.
+    func receive(_ buffer: CVPixelBuffer, at time: TimeInterval, isAdjustingFocus: Bool) {
         guard !busy, let coordinator, let target else { return }
         let (meters, reliable) = progress()
         let context = RecognitionContext(
@@ -97,7 +100,8 @@ final class ItemScanner {
                 metersPastLandmark: meters, isReliable: reliable),
             externalPause: false)
         let size = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
-        let image = RecognitionImage(timestamp: time, pixelBuffer: buffer, imageResolution: size, orientation: .right)
+        let image = RecognitionImage(timestamp: time, pixelBuffer: buffer, imageResolution: size, orientation: .right,
+                                     isAdjustingFocus: isAdjustingFocus)
         busy = true
         let run = run
         Task {
@@ -127,11 +131,15 @@ final class ItemScanner {
         // The navigator already named the stop's items on arrival.
         if announcing { announce("Now looking for \(target.name).", nil) }
         let run = run
+        let correction = languageCorrection
         Task {
             do {
-                let classifier = target.catalog.recognizesByAppearance ? try ProduceCategoryClassifier() : nil
+                // Produce: Apple Vision first, then Gemini when a proxy is set (CloudAssistConfig).
+                let classifier = target.catalog.recognizesByAppearance
+                    ? try ProduceCategoryClassifier(cloud: CloudAssistConfig.labeler()) : nil
                 let coordinator = try await RecognitionCoordinator(
                     targetID: target.catalog.targetID, catalog: target.catalog,
+                    recognizer: VisionTextRecognizer(usesLanguageCorrection: correction),
                     visualClassifier: classifier, visualPolicy: .appleVisionProduce, query: target.query)
                 guard run == self.run else {
                     await coordinator.stop()

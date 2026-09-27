@@ -178,7 +178,9 @@ final class AppModel {
             guard let navigator else { return }
             self?.scan(at: stop, with: navigator)
         }
-        navigator.onFrame = { [weak self] buffer, time in self?.scanner.receive(buffer, at: time) }
+        navigator.onFrame = { [weak self] buffer, time, focusing in
+            self?.scanner.receive(buffer, at: time, isAdjustingFocus: focusing)
+        }
         self.navigator = navigator
         // The phone sits on the cart the whole walk: don't let it lock.
         UIApplication.shared.isIdleTimerDisabled = true

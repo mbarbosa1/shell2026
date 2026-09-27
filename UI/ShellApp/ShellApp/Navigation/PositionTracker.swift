@@ -10,9 +10,10 @@ final class PositionTracker: NSObject {
     var onPosition: ((SIMD2<Double>) -> Void)?
     /// Nil while tracking is good; otherwise why it isn't.
     var onStatus: ((String?) -> Void)?
-    /// The camera image, for item recognition. Whoever takes it must let go of it quickly and
-    /// hold at most one at a time: ARKit has a small pool of these and stalls when it runs out.
-    var onFrame: ((CVPixelBuffer, TimeInterval) -> Void)?
+    /// The camera image, for item recognition, and whether the lens was refocusing. Whoever takes
+    /// the image must let go of it quickly and hold at most one at a time: ARKit has a small pool
+    /// of these and stalls when it runs out.
+    var onFrame: ((CVPixelBuffer, TimeInterval, _ isAdjustingFocus: Bool) -> Void)?
 
     /// Positions are passed on this often. Walking covers about 15 cm in that time.
     private static let interval: TimeInterval = 0.1
@@ -56,7 +57,9 @@ extension PositionTracker: ARSessionDelegate {
         MainActor.assumeIsolated {
             if let onFrame, time - lastFrame >= Self.frameInterval {
                 lastFrame = time
-                onFrame(image, time)
+                // ARKit's own camera, so a frame taken mid-refocus isn't counted as a clear look.
+                let camera = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera
+                onFrame(image, time, camera?.isAdjustingFocus ?? false)
             }
             switch state {
             case .normal:

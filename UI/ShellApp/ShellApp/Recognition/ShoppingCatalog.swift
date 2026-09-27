@@ -20,8 +20,8 @@ struct ScanTarget {
         listItemID = item.id
         name = item.name
         query = GroceryQuery(name: item.name, brand: item.brand, label: item.label)
-        catalog = ShoppingCatalog(target: product, listName: item.name, spot: item.location,
-                                  products: products, landmark: landmark, windowMeters: windowMeters)
+        catalog = ShoppingCatalog(target: product, spot: item.location, products: products,
+                                  landmark: landmark, windowMeters: windowMeters)
     }
 }
 
@@ -33,23 +33,34 @@ struct ShoppingCatalog: CatalogReading {
     let candidates: [CatalogItemSnapshot]
     let rule: DetectionActivationRuleSnapshot
 
-    /// Loose fruit and vegetables are recognized by how they look; everything else by its label.
+    /// Loose fruit and vegetables in the reviewed mapping are recognized by how they look; everything
+    /// else, including produce the mapping leaves out, by its label.
     var recognizesByAppearance: Bool {
         candidates.first { $0.id == targetID }.map { $0.recognizesByAppearance && $0.visual != nil } ?? false
     }
 
-    private static let taxonomy = try? ProduceTaxonomy.bundled()
+    /// The reviewed produce mapping, `visual-product-mappings.json`, bundled from the database
+    /// branch's `Scripts/RecognitionIntegration/Resources`.
+    private static let mappings: VisualProductMappings? = {
+        do {
+            guard let url = Bundle.main.url(forResource: "visual-product-mappings", withExtension: "json") else {
+                throw VisualProductMappings.MappingError.missingResource
+            }
+            return try VisualProductMappings(data: Data(contentsOf: url))
+        } catch {
+            assertionFailure("Produce can't be recognized by appearance: \(error.localizedDescription)")
+            return nil
+        }
+    }()
 
     @MainActor
-    fileprivate init(target: Product, listName: String, spot: String?, products: [Product],
-                     landmark: String, windowMeters: Double) {
+    fileprivate init(target: Product, spot: String?, products: [Product], landmark: String, windowMeters: Double) {
         let spots = Set(target.locations.map(\.label) + [spot].compactMap { $0 })
         let neighbors = products.filter { $0.tcin != target.tcin && $0.locations.contains { spots.contains($0.label) } }
         // The recognizer only needs ids that stay put for this scan.
         let targetID = UUID()
         self.targetID = targetID
-        candidates = [Self.snapshot(of: target, id: targetID, listName: listName)]
-            + neighbors.map { Self.snapshot(of: $0, id: UUID(), listName: nil) }
+        candidates = [Self.snapshot(of: target, id: targetID)] + neighbors.map { Self.snapshot(of: $0, id: UUID()) }
         rule = DetectionActivationRuleSnapshot(targetItemID: targetID, landmarkID: landmark,
                                                activateAfterMeters: 0, deactivateAfterMeters: windowMeters)
     }
@@ -63,26 +74,14 @@ struct ShoppingCatalog: CatalogReading {
     }
 
     @MainActor
-    private static func snapshot(of product: Product, id: UUID, listName: String?) -> CatalogItemSnapshot {
+    private static func snapshot(of product: Product, id: UUID) -> CatalogItemSnapshot {
         let normalizer = TextNormalizer()
         let texts = [product.title] + [product.brand].compactMap { $0 }
         return CatalogItemSnapshot(
             id: id, catalogKey: product.tcin, displayName: product.title, brand: product.brand,
             normalizedTerms: Set(texts.flatMap { normalizer.tokens(from: $0) }),
-            visual: produceClass(of: product, listName: listName).map {
-                VisualCatalogMetadata(modelID: ProduceCategoryClassifier.modelID, classIDs: [$0], allowsConfirmation: true)
-            },
+            visual: mappings?.metadata(for: product.tcin),
             itemType: product.itemType
         )
-    }
-
-    /// "Bananas" → `banana`. Tries the name on the list first, then the start of the catalog title
-    /// ("Fresh Banana" from "Fresh Banana - each - Good & Gather™"). Nil for anything but produce.
-    @MainActor
-    private static func produceClass(of product: Product, listName: String?) -> String? {
-        let type = product.itemType?.lowercased() ?? ""
-        guard type == "fruit" || type.hasPrefix("vegetable"), let taxonomy else { return nil }
-        let title = product.title.components(separatedBy: " - ").first ?? product.title
-        return [listName, title].compactMap { $0 }.lazy.compactMap(taxonomy.classID(forItemName:)).first
     }
 }

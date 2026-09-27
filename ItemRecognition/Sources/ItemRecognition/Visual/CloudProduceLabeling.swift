@@ -24,20 +24,15 @@ public protocol CloudProduceLabeling: Sendable {
 /// turns on, Apple Vision works alone for `appleVisionSeconds`; then one Gemini call
 /// is made, and after each call that did not lead to a question Apple Vision gets
 /// the same time again. `maximumRequestsPerItem` caps calls for one item scan and
-/// `maximumRequests` is a backstop. `localScoreBelow` and `weakFramesBeforeRequest`
-/// are unused.
+/// `maximumRequests` is a backstop.
 public struct CloudAssistPolicy: Sendable {
-    public let localScoreBelow: Float
-    public let weakFramesBeforeRequest: Int
     public let maximumRequestsPerItem: Int
     public let maximumRequests: Int
     public let maxImageDimension: CGFloat
     public let appleVisionSeconds: TimeInterval
-    public init(localScoreBelow: Float = 0.8, weakFramesBeforeRequest: Int = 3, maximumRequestsPerItem: Int = 2,
-                maximumRequests: Int = 200, maxImageDimension: CGFloat = 512, appleVisionSeconds: TimeInterval = 5) {
+    public init(maximumRequestsPerItem: Int = 2, maximumRequests: Int = 200, maxImageDimension: CGFloat = 512,
+                appleVisionSeconds: TimeInterval = 5) {
         self.appleVisionSeconds = appleVisionSeconds.isFinite ? max(0, appleVisionSeconds) : 5
-        self.localScoreBelow = localScoreBelow.isFinite ? min(max(localScoreBelow, 0), 1) : 0.8
-        self.weakFramesBeforeRequest = max(1, weakFramesBeforeRequest)
         self.maximumRequestsPerItem = max(0, maximumRequestsPerItem)
         self.maximumRequests = max(0, maximumRequests)
         self.maxImageDimension = maxImageDimension.isFinite ? max(64, maxImageDimension) : 512

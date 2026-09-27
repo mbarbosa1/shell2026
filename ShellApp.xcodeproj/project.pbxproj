@@ -34,6 +34,12 @@
 			path = Scripts/output;
 			sourceTree = "<group>";
 		};
+		5A1000000000000000000022 /* RecognitionResources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = RecognitionResources;
+			path = Scripts/RecognitionIntegration/Resources;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -56,6 +62,7 @@
 				5A1000000000000000000002 /* UI/ShellApp/ShellApp */,
 				5A1000000000000000000020 /* SwiftData */,
 				5A1000000000000000000021 /* Data */,
+				5A1000000000000000000022 /* RecognitionResources */,
 				5A1000000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -87,6 +94,7 @@
 				5A1000000000000000000002 /* UI/ShellApp/ShellApp */,
 				5A1000000000000000000020 /* SwiftData */,
 				5A1000000000000000000021 /* Data */,
+				5A1000000000000000000022 /* RecognitionResources */,
 			);
 			name = ShellApp;
 			packageProductDependencies = (
@@ -214,6 +222,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ShellApp;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Automatically identify groceries and read product labels with your mounted phone.";
+				INFOPLIST_FILE = UI/ShellApp/Info.plist;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Ask the cloud assistant on your local network to help recognize produce";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Talk with your shopping assistant by voice";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -249,6 +259,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ShellApp;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Automatically identify groceries and read product labels with your mounted phone.";
+				INFOPLIST_FILE = UI/ShellApp/Info.plist;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Ask the cloud assistant on your local network to help recognize produce";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Talk with your shopping assistant by voice";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

@@ -99,7 +99,7 @@ final class RouteNavigator {
     /// items in the cart, skipped, or navigation stopped). The camera looks for items in between.
     @ObservationIgnored var onStopChanged: ((RoutePlanner.Stop?) -> Void)?
     /// The camera image from `PositionTracker`, on a real walk. See `PositionTracker.onFrame`.
-    @ObservationIgnored var onFrame: ((CVPixelBuffer, TimeInterval) -> Void)?
+    @ObservationIgnored var onFrame: ((CVPixelBuffer, TimeInterval, _ isAdjustingFocus: Bool) -> Void)?
 
     /// The part of the path still to walk, from the start of the current leg.
     var remainingPath: [String] {
@@ -157,7 +157,7 @@ final class RouteNavigator {
             let tracker = PositionTracker(session: session)
             tracker.onPosition = { [weak self] in self?.update(position: $0) }
             tracker.onStatus = { [weak self] in self?.trackingNote = $0 }
-            tracker.onFrame = { [weak self] in self?.onFrame?($0, $1) }
+            tracker.onFrame = { [weak self] in self?.onFrame?($0, $1, $2) }
             tracker.start()
             self.tracker = tracker
         }

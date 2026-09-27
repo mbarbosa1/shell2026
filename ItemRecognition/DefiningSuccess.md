@@ -7,7 +7,7 @@ The recognition pipeline answers four different questions, in order. Each one pr
 - **Type:** `FrameAssessment` (`Sources/ItemRecognition/Extraction/FrameAssessing.swift`)
 - **Evidence:** `quality` (`usable`, `notLocated`, `multipleObjects`, `moving`, `focusing`, `tooSmall`, `clipped`) plus `objectRegion`/`objectBoxes` — foreground-instance-mask boxes, normalized lower-left.
 - **Success at this stage:** `isSuitable` (`quality == .usable && objectRegion != nil`).
-- `focusing` comes from the camera, not from the image: the camera owner sets `RecognitionImage.isAdjustingFocus` from `AVCaptureDevice.isAdjustingFocus` on every frame (the demo does; ShellApp must too). Without it, frames taken while the lens refocuses count as evidence.
+- `focusing` comes from the camera, not from the image: the camera owner sets `RecognitionImage.isAdjustingFocus` from `AVCaptureDevice.isAdjustingFocus` on every frame: the Demo from its own capture device, ShellApp from ARKit's (`ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera`, read in `PositionTracker`). Without it, frames taken while the lens refocuses count as evidence.
 - For OCR frames there's a second, related signal: `LabelRegionDetection.Readiness` (`.unsuitable`, `.noText`, `.textTooSmall`, `.readable`, in `VisionLabelRegionDetector.swift`), gated by `minimumPackageConfidence = 0.5` and `minimumTextHeight = 32` oriented pixels.
 - This is purely geometric/legibility evidence. As `VisionFrameAssessor.swift` states directly: **"A location is not evidence of identity."** Passing Stage 1 means only "worth running classification/OCR on this frame" — it says nothing about *what* the object is.
 
@@ -33,10 +33,10 @@ The recognition pipeline answers four different questions, in order. Each one pr
 ## Stage 4 — Shopper confirmation: the only real success
 
 - **Types:** `RecognitionCoordinator.acceptInsight()` / `.rejectInsight()` (`Extraction/RecognitionCoordinator.swift`), the `awaitingVerdict` flag, `ItemObservation` (`Catalog/ItemRecognitionResult.swift`) — the actual success payload.
-- **Evidence:** a human yes/no answer to "Is this `<product name>`?" Implemented today only in the throwaway Demo app (`Demo/Sources/ScanModel.swift`'s `confirmInsight()`/`negateInsight()`, backed by the verdict UI in `Demo/Sources/CameraDemoView.swift`). ShellApp has no confirmation UI yet.
+- **Evidence:** a human yes/no answer to "Is this `<product name>`?" Implemented in the Demo (`Demo/Sources/ScanModel.swift`'s `confirmInsight()`/`negateInsight()`, backed by the verdict UI in `Demo/Sources/CameraDemoView.swift`) and in ShellApp: the question is spoken with a watch cue and shown as a Yes/No card on the camera screen (`UI/ShellApp/ShellApp/Recognition/ItemScanner.swift`, `answer(_:)`); by voice, `check_off_item` is yes and `cancel_current_operation` is no.
 - **Success:** only `acceptInsight()` returning a non-nil `ItemObservation`. This holds even for an unambiguous SKU-level (`.accepted`) visual match — **there is no fast path that skips the shopper.** The library's own default-policy comment states why: *"the shopper's Accept/Deny is the final check."*
 - The receipt keeps `matchLevel` and, for `.category`, the `category` label. A `.category` receipt means the shopper, not the recognizer, vouched for the exact product.
-- This is the gap ShellApp integration (step 5 of the agreed integration order in `PROJECT_MEMORY.md`) still has to close: whatever UI is built there must produce exactly this event, not just display a `.confirmed` status.
+- In ShellApp, the on-screen Yes calls `acceptInsight()` and puts the item in the cart. The returned `ItemObservation` is not kept (recording results is out of scope for now), and a spoken or tapped check-off puts the item in the cart without going through `acceptInsight()`: the shopper vouches for it directly.
 
 ## Summary
 
