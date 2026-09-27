@@ -161,6 +161,9 @@ struct OnboardingView: View {
     /// Runs when onboarding opens: Mira says the welcome, then what to do about the microphone.
     private func welcome() {
         guard !voiceOverOn else { return } // VoiceOver reads the page itself
+        // Mira can still be connected, e.g. from a shopping trip before "Replay onboarding". Hang
+        // up so she doesn't hear the welcome and talk over it; `micTurnedOn` starts her after.
+        if model.isVoiceConnected { Task { await model.setListening(false) } }
         narrator.speak(pages[0].spoken, clip: "onboarding_0") {
             switch micPermission {
             case .granted: micTurnedOn()
