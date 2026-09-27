@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SwiftData
+import UIKit
 
 /// UI state for the screens, backed by the grocery database (`GroceryDatabase`).
 /// The screens and the voice agent (`VoiceAgent`) change the list through the methods below,
@@ -100,7 +101,17 @@ final class AppModel {
     // SAVVY: Voice agent
 
     func setListening(_ isListening: Bool) async {
+        // VoiceOver already reads the screen aloud. The agent talking too would make both unusable.
+        if isListening && UIAccessibility.isVoiceOverRunning { return }
         await voice?.setListening(isListening)
+    }
+
+    /// Called when VoiceOver is turned on or off. Turning it on hangs up the agent;
+    /// turning it off leaves the agent off until the user starts it again.
+    func voiceOverChanged() async {
+        if UIAccessibility.isVoiceOverRunning {
+            await voice?.stop()
+        }
     }
 
     //as the voice agent hears items to add, we need to add them to the databse
@@ -251,6 +262,46 @@ final class AppModel {
     func list(number: Int) -> GroceryList? {
         let descriptor = FetchDescriptor<GroceryList>(predicate: #Predicate { $0.number == number })
         return try? context.fetch(descriptor).first
+    }
+
+ // MARK: Onboarding
+
+    /// Saved on the phone, so onboarding only shows on first launch.
+    var hasOnboarded = UserDefaults.standard.bool(forKey: "hasOnboarded") {
+        didSet { UserDefaults.standard.set(hasOnboarded, forKey: "hasOnboarded") }
+    }
+    /// Which onboarding page is showing. The buttons and the voice agent both change it.
+    var onboardingPage = 0
+
+    /// Moves to an onboarding page and returns what the voice agent should say.
+    func showOnboardingPage(_ index: Int) -> (message: String, isError: Bool) {
+        guard !hasOnboarded else { return ("Onboarding is already finished.", true) }
+        let pages = OnboardingPage.all
+        guard pages.indices.contains(index) else {
+            return (index < 0
+                ? "This is already the first page."
+                : "This is the last page. The user can say “get started” to finish.", true)
+        }
+        onboardingPage = index
+        return ("Now on page \(index + 1) of \(pages.count). Read this to the user: \(pages[index].spoken)", false)
+    }
+
+    func finishOnboarding() {
+        hasOnboarded = true
+    }
+
+    /// Demo helper: shows onboarding again from the first page.
+    func restartOnboarding() {
+        onboardingPage = 0
+        hasOnboarded = false
+    }
+
+     /// Checks the "Replay onboarding" switch in the iPhone Settings app.
+    func checkReplayOnboardingSetting() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "replayOnboarding") else { return }
+        defaults.set(false, forKey: "replayOnboarding") // turns the switch back off
+        restartOnboarding()
     }
 
     // MARK: Text for the agent

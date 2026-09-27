@@ -284,6 +284,17 @@ final class VoiceAgent {
             model.isCameraOpen = false
             return ("Camera closed.", false)
 
+        case "next_page":
+            return model.showOnboardingPage(model.onboardingPage + 1)
+
+        case "previous_page":
+            return model.showOnboardingPage(model.onboardingPage - 1)
+
+        case "finish_onboarding":
+            guard !model.hasOnboarded else { return ("Onboarding is already finished.", true) }
+            model.finishOnboarding()
+            return ("Onboarding finished. The user is now on their shopping list.", false)
+
         default:
             return ("Unknown tool: \(tool).", true)
         }

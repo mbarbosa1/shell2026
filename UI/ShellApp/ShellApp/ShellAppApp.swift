@@ -5,6 +5,7 @@ import SwiftUI
 struct ShellAppApp: App {
     private let container: ModelContainer
     @State private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase // NEW: is the app open, in the background, etc.
 
     init() {
         do {
@@ -17,9 +18,23 @@ struct ShellAppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(model)
-                .preferredColorScheme(.dark)
+            Group {
+                if model.hasOnboarded {
+                    RootView()
+                } else {
+                    OnboardingView()
+                }
+            }
+            .environment(model)
+            .preferredColorScheme(.dark)
+            // iOS posts this whenever VoiceOver is switched on or off.
+            .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+                Task { await model.voiceOverChanged() }
+            }
+            // NEW: runs when the app opens and each time you come back to it (e.g. from Settings).
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                if phase == .active { model.checkReplayOnboardingSetting() }
+            }
         }
         .modelContainer(container)
     }
