@@ -39,7 +39,7 @@ enum ProductMatcher {
     }
 
     /// Lowercased words, with plurals folded so "Cookies"/"cookie" and "berries"/"berry" compare equal.
-    private static func words(_ text: String) -> [String] {
+    static func words(_ text: String) -> [String] {
         text.lowercased()
             .split { !$0.isLetter && !$0.isNumber && $0 != "%" }
             .map { word in
