@@ -6,18 +6,31 @@ import WatchKit
 /// `WatchHaptic` in the iPhone app (ShellApp/WatchLink.swift).
 enum WatchHaptic: String {
     case right, left, turnAround, go, arrived, wrongWay, finished
+    /// Cart distance sensor: buzz from `obstacleOn` until `obstacleOff`.
+    case obstacleOn, obstacleOff
+    /// The arm has the product centered; hand guiding starts.
+    case productFound
+    /// Hand guiding: each direction repeats until the next cue.
+    case handLeft, handRight, handUp, handDown, handOnItem, handGuideOff
 
     /// Turns are counted taps: right one, left two, turn around three. The rest use the watch's
-    /// own patterns, which feel different from a plain tap.
+    /// own patterns, which feel different from a plain tap. Hand left/right reuse the turn taps,
+    /// and up/down use the rising and falling patterns. The obstacle alarm and hand directions
+    /// repeat (see `WatchReceiver`); `obstacleOff` and `handGuideOff` only stop them.
     var pattern: [WKHapticType] {
         switch self {
-        case .right: [.notification]
-        case .left: [.notification, .notification]
+        case .right, .handRight: [.notification]
+        case .left, .handLeft: [.notification, .notification]
         case .turnAround: [.notification, .notification, .notification]
         case .go: [.start]
         case .arrived: [.stop]
-        case .wrongWay: [.failure]
+        case .wrongWay, .obstacleOn: [.failure]
         case .finished: [.success]
+        case .productFound: [.click, .click]
+        case .handUp: [.directionUp]
+        case .handDown: [.directionDown]
+        case .handOnItem: [.success, .success]
+        case .obstacleOff, .handGuideOff: []
         }
     }
 }
@@ -35,8 +48,16 @@ final class WatchReceiver: NSObject {
 
     /// Taps closer than this blur into one.
     private static let tapGap: Duration = .milliseconds(600)
+    /// How often the obstacle alarm buzzes. Much faster and the watch drops some.
+    private static let alarmGap: Duration = .milliseconds(700)
+    /// How often a hand direction repeats, like a "warmer / colder" game.
+    private static let handGap: Duration = .milliseconds(1400)
 
     @ObservationIgnored private var playing: Task<Void, Never>?
+    /// The repeating obstacle buzz. It always wins: other cues don't play while it's on.
+    @ObservationIgnored private var alarm: Task<Void, Never>?
+    /// The repeating hand direction. Nil when not guiding.
+    @ObservationIgnored private var handGuide: Task<Void, Never>?
     @ObservationIgnored private var runtime: WKExtendedRuntimeSession?
 
     func activate() {
@@ -57,12 +78,55 @@ final class WatchReceiver: NSObject {
     private func receive(text: String?, haptic: WatchHaptic?) {
         if let text { self.text = text }
         guard let haptic else { return }
+        switch haptic {
+        case .obstacleOn:
+            startAlarm()
+        case .obstacleOff:
+            alarm?.cancel()
+            alarm = nil
+        case .handLeft, .handRight, .handUp, .handDown:
+            repeatHandDirection(haptic)
+        case .handOnItem, .handGuideOff:
+            handGuide?.cancel()
+            handGuide = nil
+            play(haptic)
+        default:
+            play(haptic)
+        }
+    }
+
+    /// Plays a cue's pattern once, unless the obstacle alarm is buzzing.
+    private func play(_ haptic: WatchHaptic) {
+        guard alarm == nil else { return }
         playing?.cancel()
-        playing = Task {
-            for (index, type) in haptic.pattern.enumerated() {
-                if index > 0 { try? await Task.sleep(for: Self.tapGap) }
-                guard !Task.isCancelled else { return }
-                WKInterfaceDevice.current().play(type)
+        playing = Task { await tap(haptic.pattern) }
+    }
+
+    private func tap(_ pattern: [WKHapticType]) async {
+        for (index, type) in pattern.enumerated() {
+            if index > 0 { try? await Task.sleep(for: Self.tapGap) }
+            guard !Task.isCancelled else { return }
+            WKInterfaceDevice.current().play(type)
+        }
+    }
+
+    private func startAlarm() {
+        guard alarm == nil else { return }  // already buzzing
+        playing?.cancel()
+        alarm = Task {
+            while !Task.isCancelled {
+                WKInterfaceDevice.current().play(.failure)
+                try? await Task.sleep(for: Self.alarmGap)
+            }
+        }
+    }
+
+    private func repeatHandDirection(_ haptic: WatchHaptic) {
+        handGuide?.cancel()
+        handGuide = Task {
+            while !Task.isCancelled {
+                if alarm == nil { await tap(haptic.pattern) }
+                try? await Task.sleep(for: Self.handGap)
             }
         }
     }
