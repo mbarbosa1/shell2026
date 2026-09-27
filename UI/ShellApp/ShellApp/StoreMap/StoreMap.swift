@@ -11,9 +11,19 @@ struct StoreMap {
         case start, walkway, scan
     }
 
-    /// Which way the camera looks to scan a shelf, in map directions.
+    /// Which way the camera looks to scan a shelf, facing the way the cart is pushed. The arm
+    /// turns the phone to it (`ArmController.face`).
     enum Side: String {
-        case up, down, left, right
+        case left, right, ahead
+
+        /// The same shelf, walked the other way.
+        var flipped: Side {
+            switch self {
+            case .left: .right
+            case .right: .left
+            case .ahead: .ahead
+            }
+        }
     }
 
     struct Node: Identifiable {
@@ -44,8 +54,9 @@ struct StoreMap {
         }
 
         /// The lane in both directions, so the planner can enter from whichever end is closer.
+        /// `side` is for walking `nodes` in the order given; walking them backwards swaps it.
         static func lane(_ nodes: [String], scanning side: Side? = nil) -> [Visit] {
-            [Visit(path: nodes, side: side), Visit(path: nodes.reversed(), side: side)]
+            [Visit(path: nodes, side: side), Visit(path: nodes.reversed(), side: side?.flipped)]
         }
     }
 
@@ -54,7 +65,7 @@ struct StoreMap {
     /// it's walked in `path` order.
     struct CheckoutRow {
         let path: [String]
-        let side: ArmController.ShelfSide
+        let side: Side
     }
 
     let nodes: [Node]
@@ -131,21 +142,27 @@ extension StoreMap {
         // Surveyed edges use the straight line between their fitted ends (`length(of:)`).
         let edges = survey.edges.map { Edge(from: $0.from, to: $0.to) }
 
+        // Sides were checked in the store, for walking each lane's nodes in the order listed.
         var stops: [String: [Visit]] = [
-            "G7": [.stop("1")],
+            // Straight ahead at node 1, the first stop of a trip.
+            "G7": [.stop("1", scanning: .ahead)],
             // Whole lanes: the items can be anywhere along them.
-            "G6": Visit.lane(["2", "3", "4"]),
-            "G8": Visit.lane(["3", "6"]),
-            "G9": Visit.lane(["3", "6"]),
-            "G13": Visit.lane(["5", "6", "7"]),
-            "G44": Visit.lane(["44End", "4", "5"]),
+            "G6": Visit.lane(["2", "3", "4"], scanning: .left),
+            "G8": Visit.lane(["3", "6"], scanning: .left),
+            "G9": Visit.lane(["3", "6"], scanning: .right),
+            "G13": Visit.lane(["5", "6", "7"], scanning: .left),
+            // The back wall, like G42. Arriving at node 4 from node 3 it's straight ahead, but the
+            // lane is always walked from one of its ends.
+            "G44": Visit.lane(["44End", "4", "5"], scanning: .left),
             // The back wall, from aisle 17 to aisle 25.
             "G42": Visit.lane(["16_17Back", "18_19Back", "20_21Back", "22_23Back", "24_25Back"], scanning: .left),
         ]
+        // Walking front to back, the even aisle is on the left and the odd one on the right.
         for pair in aislePairs {
-            for aisle in pair.split(separator: "_") {
-                stops["G\(aisle)"] = Visit.lane(["\(pair)Front", "\(pair)Back"])
-            }
+            let aisles = pair.split(separator: "_")
+            let lane = ["\(pair)Front", "\(pair)Back"]
+            stops["G\(aisles[0])"] = Visit.lane(lane, scanning: .left)
+            stops["G\(aisles[1])"] = Visit.lane(lane, scanning: .right)
         }
 
         let scanNodes = Set(stops.values.joined().filter { $0.path.count == 1 }.map { $0.path[0] })

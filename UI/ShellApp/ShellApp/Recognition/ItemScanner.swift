@@ -11,12 +11,13 @@ import PersonDistanceIOS
 /// by the meters `progress` reports, and off everywhere else, so no frame is looked at on the way
 /// to a stop. Items are looked for one at a time, in the order given.
 ///
-/// While it looks, `PickupGuide` sweeps the arm across the stop's shelves. Once the camera settles
-/// on the item, the arm holds and the user is asked "Is this Oat milk?". No keeps looking. Yes
+/// While it looks, the arm faces the item's shelf (`targetChanged`, then `AppModel` turns it). Once
+/// the camera settles on the item, the user is asked "Is this Oat milk?". No keeps looking. Yes
 /// starts PersonDistance measuring it, and pickup turns the arm onto it and guides the hand; the
 /// item goes in the cart (`found`) once the fingertip reaches it (user decision, September 27,
-/// 2026). While looking, a hint like "Move more to the left" is said when it changes, at most every
-/// `hintInterval`. Everything goes out through `announce`: spoken, and played on the watch.
+/// 2026). While looking, a hint like "Move more to the left" (or, facing a shelf, "Push the cart
+/// forward a little") is said when it changes, at most every `hintInterval`. Everything goes out
+/// through `announce`: spoken, and played on the watch.
 @MainActor
 @Observable
 final class ItemScanner {
@@ -43,17 +44,24 @@ final class ItemScanner {
     /// PersonDistance: follows the product asked about, and measures its distance once the shopper
     /// says Yes (never before). Set by `AppModel`.
     @ObservationIgnored var range: ProductRangeSession?
-    /// Sweeps the arm while looking and guides the hand after a Yes. Set by `AppModel`.
+    /// Turns the arm onto the product and guides the hand after a Yes. Set by `AppModel`.
     @ObservationIgnored var pickup: PickupGuide?
+    /// Called with each new item looked for, and nil when there's none, so the arm can turn to
+    /// its shelf. Set by `AppModel`.
+    @ObservationIgnored var targetChanged: (ScanTarget?) -> Void = { _ in }
+    /// Which way the arm points the camera. Turned to a side, left and right in the image are
+    /// ahead and behind along the shelf, so those hints tell the user to push or pull the cart.
+    /// Set by `AppModel`.
+    @ObservationIgnored var facing = StoreMap.Side.ahead
     /// Baseline trials in tester mode: every item scan is one. It also holds the OCR language
     /// correction setting the next item uses. Set by `AppModel`.
     @ObservationIgnored var trials: TrialRecorder?
     /// A real walk, or a tester's test scan (which never touches the list).
     @ObservationIgnored private var mode = TrialRecorder.Mode.walk
     @ObservationIgnored private var queue: [ScanTarget] = []
-    /// Which side of the user the stop's shelves are on, for the arm's sweep. Empty for a test scan,
-    /// where the tester points the camera.
-    @ObservationIgnored private var sides: [ArmController.ShelfSide] = []
+    /// Where the item was last seen in the frame, in Vision coordinates (0–1, origin at the bottom
+    /// left, in the upright image): the box PersonDistance follows.
+    @ObservationIgnored private var productBox: CGRect?
     /// Meters past the reference node, or nil before it; and whether tracking can be trusted.
     @ObservationIgnored private var progress: () -> (meters: Double?, reliable: Bool) = { (nil, false) }
     @ObservationIgnored private var coordinator: RecognitionCoordinator?
@@ -69,11 +77,9 @@ final class ItemScanner {
     @ObservationIgnored private var toldToMoveOn = false
 
     /// Starts looking for `targets`: at the stop just reached on a walk, or right away for a test scan.
-    /// - Parameter sides: where the stop's shelves are, for the arm's sweep. None: no sweep.
-    func begin(_ targets: [ScanTarget], sides: [ArmController.ShelfSide] = [], mode: TrialRecorder.Mode = .walk,
+    func begin(_ targets: [ScanTarget], mode: TrialRecorder.Mode = .walk,
                progress: @escaping () -> (meters: Double?, reliable: Bool)) {
         queue = targets
-        self.sides = sides
         self.mode = mode
         isTestScan = mode == .testScan
         self.progress = progress
@@ -100,6 +106,7 @@ final class ItemScanner {
         progress = { (nil, false) }
         stopTarget()
         target = nil
+        targetChanged(nil)
         isTestScan = false
     }
 
@@ -157,7 +164,6 @@ final class ItemScanner {
             diagnostics.note("Shopper rejected suggestion; looking again")
             trials?.rejected()
             range?.stop()
-            pickup?.resumeSearch()
             Task {
                 await coordinator.rejectInsight()
                 guard run == self.run else { return }
@@ -236,10 +242,12 @@ final class ItemScanner {
         stopTarget()
         guard !queue.isEmpty else {
             target = nil
+            targetChanged(nil)
             return
         }
         let target = queue.removeFirst()
         self.target = target
+        targetChanged(target)
         diagnostics = ScanDiagnostics()
         diagnostics.status = "Starting recognition"
         diagnostics.cloudConfigured = target.catalog.recognizesByAppearance && CloudAssistConfig.endpoint != nil
@@ -271,7 +279,6 @@ final class ItemScanner {
                     diagnostics.note("Gemini unavailable: configure the proxy in test settings")
                 }
                 trials?.begin(target, mode: mode)
-                pickup?.search(sides: sides)
             } catch {
                 print("📷 Can't look for \(target.name): \(error.localizedDescription)")
                 guard run == self.run else { return }
@@ -334,9 +341,27 @@ final class ItemScanner {
         spokenHint = nil
         spokenAt = -.infinity
         toldToMoveOn = false
+        productBox = nil
+    }
+
+    /// Where the item is in the frame, in Vision coordinates: the one object in view, or with
+    /// several, the one the catalog picked. Nil when there's no telling.
+    private static func productBox(in update: RecognitionUpdate, imageSize: CGSize) -> CGRect? {
+        let boxes = update.assessment?.objectBoxes ?? []
+        guard boxes.count > 1 else { return boxes.first }
+        guard let focused = update.focusedObject else { return nil }
+        // `focusedObject` is in the camera buffer's pixels: pick the box that crops to it.
+        func overlap(_ box: CGRect) -> CGFloat {
+            guard let crop = try? VisionRegionOfInterest.pixelCrop(
+                normalizedRegion: box, imageSize: imageSize, orientation: .right) else { return 0 }
+            let common = crop.intersection(focused)
+            return common.isNull ? 0 : common.width * common.height
+        }
+        return boxes.max { overlap($0) < overlap($1) }
     }
 
     private func handle(_ update: RecognitionUpdate, at time: TimeInterval, imageSize: CGSize) {
+        if let box = Self.productBox(in: update, imageSize: imageSize) { productBox = box }
         // A settled answer repeats on every frame until answered: one question, one recorded frame.
         if update.awaitingVerdict && question != nil {
             if update.advanceNotice != nil { trials?.timedOut() }
@@ -348,14 +373,9 @@ final class ItemScanner {
             trials?.asked(update.result?.matchLevel)
             question = prompt
             hint = nil
-            pickup?.hold()
             follow(update, imageSize: imageSize)
             announce(prompt, .arrived)
             return
-        }
-        // The item half-seen: keep the arm still so recognition can make sure.
-        if let result = update.result, result.status == .candidate, result.matchedItemID == target?.catalog.targetID {
-            pickup?.holdBriefly()
         }
         // After a minute at the item without finding it.
         if let notice = update.advanceNotice, !toldToMoveOn {
@@ -368,35 +388,63 @@ final class ItemScanner {
             if !update.gate.isDetectionActive { hint = nil }
             return
         }
-        hint = update.framingInstruction
+        // Facing a shelf, left and right in the image are along it: push or pull the cart.
+        hint = update.guidance.map { $0.message(facing: facing) } ?? update.framingInstruction
         guard let hint, hint != spokenHint, time - spokenAt >= Self.hintInterval else {
             if hint == nil { spokenHint = nil }
             return
         }
         spokenHint = hint
         spokenAt = time
-        announce(hint, update.guidance?.haptic)
+        announce(hint, update.guidance?.haptic(facing: facing))
     }
 
     /// Hands the product being asked about to PersonDistance to follow until the answer. Only one
-    /// product: the one whose text matched when several were in view, or the only one in view,
-    /// never the region around several. With neither, a Yes has nothing to measure.
+    /// product: `productBox` (the one object in view, or the one whose text matched), never the
+    /// region around several. Without one, a Yes has nothing to measure.
     private func follow(_ update: RecognitionUpdate, imageSize: CGSize) {
-        guard !isTestScan else { return }
-        let objects = update.assessment?.objectBoxes.count ?? 0
-        guard let target,
-              let box = update.focusedObject ?? (objects == 1 ? update.assessment?.objectRegion : nil) else { return }
+        guard !isTestScan, let target else { return }
+        // PersonDistance takes the camera buffer's pixels.
+        let box = productBox.flatMap {
+            try? VisionRegionOfInterest.pixelCrop(normalizedRegion: $0, imageSize: imageSize, orientation: .right)
+        } ?? update.focusedObject
+        guard let box else { return }
         range?.follow(target.listItemID, box: box, imageSize: imageSize)
     }
 }
 
 private extension RecognitionGuidance {
-    /// Left and right are taps on the watch, like turns.
-    var haptic: WatchHaptic? {
-        switch self {
-        case .moveLeft: .left
-        case .moveRight: .right
+    /// Which way along the shelf "left" and "right" in the image are, with the camera turned to
+    /// `side`: facing right, the image's left is ahead of the cart; facing left, it's behind.
+    /// Nil for any other hint, or with the camera facing ahead.
+    private func along(facing side: StoreMap.Side) -> Bool? {
+        switch (self, side) {
+        case (.moveLeft, .right), (.moveRight, .left): true
+        case (.moveLeft, .left), (.moveRight, .right): false
         default: nil
+        }
+    }
+
+    func message(facing side: StoreMap.Side) -> String {
+        switch along(facing: side) {
+        case true?: "Push the cart forward a little"
+        case false?: "Pull the cart back a little"
+        case nil: message
+        }
+    }
+
+    /// Left and right are taps on the watch, like turns. Forward along the shelf is the "go" cue;
+    /// back has none, so only the words say it.
+    func haptic(facing side: StoreMap.Side) -> WatchHaptic? {
+        switch along(facing: side) {
+        case true?: return .go
+        case false?: return nil
+        case nil: break
+        }
+        switch self {
+        case .moveLeft: return .left
+        case .moveRight: return .right
+        default: return nil
         }
     }
 }

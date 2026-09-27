@@ -70,10 +70,11 @@ public final class ProductRangeSession {
     @ObservationIgnored private var depthOn = false
     @ObservationIgnored private let visionQueue = DispatchQueue(label: "persondistance.range")
 
-    /// How often the newest frame is checked. Tracking and depth take a few ms each.
-    private static let checkInterval: Duration = .milliseconds(100)
-    /// Seconds without finding the product before it counts as lost.
-    static let lostAfter: TimeInterval = 1
+    /// How often the newest frame is checked: 20 a second, like the tracker the arm was first tuned
+    /// with (ShellApp's former `ProductTracker`). Tracking and depth take a few ms each.
+    private static let checkInterval: Duration = .milliseconds(50)
+    /// Seconds without finding the product before it counts as lost (also as first tuned).
+    static let lostAfter: TimeInterval = 1.5
 
     /// `session` is the app's one ARKit session; this reads its frames, and adds LiDAR depth to
     /// its configuration only while measuring.

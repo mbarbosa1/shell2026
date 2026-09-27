@@ -60,7 +60,7 @@ final class CheckoutFinder {
     @ObservationIgnored private let range: ProductRangeSession
     @ObservationIgnored private let imageContext = CIContext()
     @ObservationIgnored private var finder: SelfCheckoutFinder?
-    @ObservationIgnored private var side = ArmController.ShelfSide.right
+    @ObservationIgnored private var side = StoreMap.Side.right
     @ObservationIgnored private var looking: Task<Void, Never>?
     @ObservationIgnored private var sweep: Task<Void, Never>?
     @ObservationIgnored private var spokenMeters: Double?
@@ -74,7 +74,7 @@ final class CheckoutFinder {
     }
 
     /// Starts looking along the row. The machines are on `side`.
-    func start(side: ArmController.ShelfSide) {
+    func start(side: StoreMap.Side) {
         stop()
         self.side = side
         // Read now, so a proxy set in the tester settings since launch is used.

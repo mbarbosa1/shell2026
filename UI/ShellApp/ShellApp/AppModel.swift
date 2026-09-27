@@ -85,12 +85,14 @@ final class AppModel {
     @ObservationIgnored private let watch: WatchLink
     @ObservationIgnored private let cartDevice: CartBluetooth
     @ObservationIgnored private var obstacleDetector = ObstacleDetector()
+    /// Turns the phone on the cart: to each item's shelf at a stop, and back ahead after it. Shared
+    /// by pickup and the self-checkout finder, which never run at the same time.
+    @ObservationIgnored private let arm: ArmController
+    /// Which shelf each list item at the current stop is on, by item id (from the map's `Visit.side`).
+    @ObservationIgnored private var scanSides: [UUID: StoreMap.Side] = [:]
     /// Finds the product on the shelf with the arm and guides the user's hand to it, using the
     /// camera's ARKit frames.
     @ObservationIgnored let pickup: PickupGuide
-    /// The phone's pan/tilt arm on the cart, shared by pickup and the self-checkout finder, which
-    /// never run at the same time.
-    @ObservationIgnored private let arm: ArmController
     /// After the last item: finds the self-checkout along its row and guides the cart to it.
     @ObservationIgnored let checkout: CheckoutFinder
 
@@ -117,6 +119,8 @@ final class AppModel {
         scanner.found = { [weak self] id in self?.putInCart(id) }
         scanner.range = range
         scanner.pickup = pickup
+        // The arm turns to the shelf of each item looked for (`aim(at:)`).
+        scanner.targetChanged = { [weak self] target in self?.aim(at: target) }
         scanner.trials = trials
         pickup.onFinished = { [weak self] outcome in self?.scanner.pickupFinished(outcome) }
         checkout.announce = { [weak self] text, haptic in self?.announce(text, haptic: haptic) }
@@ -156,8 +160,20 @@ final class AppModel {
     // MARK: Navigation
 
     /// What's left on the list, for the route planner.
+    /// An item whose aisle isn't on the map (one the store doesn't have, like G10, saved on the item
+    /// before the catalog was fixed) goes to another spot its product is stocked at instead, when
+    /// one is on the map. Otherwise the route skips it and says so.
     var routeItems: [RoutePlanner.Item] {
-        items.filter { !$0.isCollected }.map { RoutePlanner.Item(name: $0.name, location: $0.location) }
+        let stops = StoreMap.target.stops
+        return items.filter { !$0.isCollected }.map { item in
+            var location = item.location
+            if let saved = location, stops[saved.uppercased()] == nil,
+               let spot = product(for: item)?.locations.sorted(by: { ($0.block, $0.aisle) < ($1.block, $1.aisle) })
+                   .map(\.label).first(where: { stops[$0] != nil }) {
+                location = spot
+            }
+            return RoutePlanner.Item(name: item.name, location: location)
+        }
     }
 
     /// "Start shopping", from the button or the voice agent. Links anything not matched to the
@@ -201,7 +217,8 @@ final class AppModel {
             return "\(item.name) isn't linked to a catalog product."
         }
         isCameraOpen = true
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             guard await camera.start() else {
                 closeCamera()
                 return
@@ -323,18 +340,42 @@ final class AppModel {
     /// node (the reference node) to the end of its lane. Only on a real walk: a simulated one has
     /// no camera images.
     private func scan(at stop: RoutePlanner.Stop?, with navigator: RouteNavigator) {
-        guard let stop, !navigator.isSimulated else {
+        guard let stop else {
+            scanSides = [:]
             scanner.end()
+            return
+        }
+        guard !navigator.isSimulated else {
+            // No camera images on a simulated walk, but the arm still turns, to try it at each stop.
+            scanSides = [:]
+            scanner.end()
+            arm.face(stop.scans.first?.side)
             return
         }
         let names = Set(stop.scans.flatMap(\.itemNames))
         let window = navigator.meters(of: stop) + ItemScanner.margin
-        let targets = items.filter { !$0.isCollected && names.contains($0.name) }.compactMap {
+        let stopItems = items.filter { !$0.isCollected && names.contains($0.name) }
+        scanSides = [:]
+        for item in stopItems {
+            if let side = stop.scans.first(where: { $0.itemNames.contains(item.name) })?.side {
+                scanSides[item.id] = side
+            }
+        }
+        let targets = stopItems.compactMap {
             ScanTarget(item: $0, products: catalogProducts, landmark: stop.path[0], windowMeters: window)
         }
-        scanner.begin(targets, sides: navigator.shelfSides(of: stop)) { [weak navigator] in
+        scanner.begin(targets) { [weak navigator] in
             (navigator?.metersIntoStop, navigator?.trackingNote == nil)
         }
+    }
+
+    /// Turns the phone to the shelf of the item being looked for, or straight ahead when there's
+    /// none. An item whose side the map doesn't know is looked for straight ahead too.
+    private func aim(at target: ScanTarget?) {
+        pickup.stop()
+        let side = target.flatMap { scanSides[$0.listItemID] } ?? .ahead
+        scanner.facing = side
+        if target == nil { arm.moveHome() } else { arm.face(side) }
     }
 
     /// Yes or no to the camera's "Is this Oat milk?". Returns false when nothing was asked.

@@ -106,7 +106,7 @@ final class RouteNavigator {
     @ObservationIgnored var onFrame: ((CVPixelBuffer, TimeInterval, _ isAdjustingFocus: Bool) -> Void)?
     /// Called when the last leg starts along the map's self-checkout row, with the side the machines
     /// are on. The camera looks for them until `reachedCheckout()` or the end of the row.
-    @ObservationIgnored var onCheckoutRow: ((ArmController.ShelfSide) -> Void)?
+    @ObservationIgnored var onCheckoutRow: ((StoreMap.Side) -> Void)?
     /// Set once the camera has seen a self-checkout on the row, so the end of the row says so.
     @ObservationIgnored var checkoutSeen = false
 
@@ -138,6 +138,8 @@ final class RouteNavigator {
     /// The map direction last walked, so a new plan can start with the right turn.
     @ObservationIgnored private var heading: SIMD2<Double>?
     @ObservationIgnored private var hasWarned = false
+    /// Said before the first instruction: the items the route can't take the user to.
+    @ObservationIgnored private var skippedNote: String?
     /// Items whose stop was skipped. Left out when planning again.
     @ObservationIgnored private var skipped: Set<String> = []
 
@@ -175,9 +177,16 @@ final class RouteNavigator {
             self.tracker = tracker
         }
         let plan = RoutePlanner(map: map).plan(for: remainingItems())
+        let skipped = plan.unmapped.map(\.name) + plan.unlocated
+        if !skipped.isEmpty {
+            let names = ListFormatter.localizedString(byJoining: skipped)
+            skippedNote = "\(names) \(skipped.count == 1 ? "isn't" : "aren't") in this store, so I'll skip "
+                + (skipped.count == 1 ? "it." : "them.")
+        }
         // Nothing to walk to: every route starts and ends at the entrance, so this one would end
         // the trip (and close the camera) before it began. Say why and leave the camera open.
         guard !plan.stops.isEmpty || plan.path.count > 1 else {
+            skippedNote = nil  // The message below names them.
             self.plan = plan
             legs = []
             phase = .finished
@@ -217,30 +226,6 @@ final class RouteNavigator {
     /// Walked length of a stop's lane: 0 for a one-node stop.
     func meters(of stop: RoutePlanner.Stop) -> Double {
         zip(stop.path, stop.path.dropFirst()).reduce(0) { $0 + edgeLength($1.0, $1.1) }
-    }
-
-    /// Which side of the user a stop's shelves are on, for the arm's sweep: the map's scan sides
-    /// seen from the way the user faces on arriving. Both, left first, when the map doesn't say.
-    func shelfSides(of stop: RoutePlanner.Stop) -> [ArmController.ShelfSide] {
-        guard let heading else { return [.left, .right] }
-        let sides = Set(stop.scans.compactMap(\.side).compactMap { Self.shelfSide(of: $0, facing: heading) })
-        let known = [ArmController.ShelfSide.left, .right].filter(sides.contains)
-        return known.isEmpty ? [.left, .right] : known
-    }
-
-    /// A map direction as the user's left or right while facing `heading` (a map unit vector).
-    /// Nil when it's ahead or behind.
-    static func shelfSide(of side: StoreMap.Side, facing heading: SIMD2<Double>) -> ArmController.ShelfSide? {
-        let direction: SIMD2<Double> = switch side {
-        case .up: SIMD2(0, 1)
-        case .down: SIMD2(0, -1)
-        case .left: SIMD2(-1, 0)
-        case .right: SIMD2(1, 0)
-        }
-        // Positive: a quarter turn counterclockwise from the heading, which is the user's left.
-        let cross = heading.x * direction.y - heading.y * direction.x
-        guard abs(cross) >= 0.5 else { return nil }
-        return cross > 0 ? .left : .right
     }
 
     /// Call when the list changes. At a stop, moves on once all of its items are in the cart.
@@ -458,6 +443,8 @@ final class RouteNavigator {
     // MARK: Words
 
     private func say(_ text: String, haptic: WatchHaptic?) {
+        let text = skippedNote.map { "\($0) \(text)" } ?? text
+        skippedNote = nil
         instruction = text
         announce(text, haptic)
     }

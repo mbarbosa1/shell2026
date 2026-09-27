@@ -7,23 +7,24 @@ import PersonDistanceIOS
 
 /// Runs the "find it on the shelf and help the user grab it" part of a stop, with `ItemScanner`:
 ///
-/// 1. **Searching:** the arm sweeps the shelf (`search(sides:)`) while recognition looks for the item.
-/// 2. **Holding:** recognition asks "Is this Oat milk?", and the arm stays where it saw it (`hold()`).
-///    No sweeps again (`resumeSearch()`).
-/// 3. **Centering:** after Yes (`centerOnProduct()`), the arm turns in small steps toward the
-///    product's box, which PersonDistance tracks, until it's in the middle of the frame.
-/// 4. **Guiding the hand:** PersonDistance keeps the product's place (`anchorProduct()`), the arm
+/// 1. **Searching:** `AppModel` faces the arm to the item's shelf (`ArmController.face`) while
+///    `ItemScanner` looks for it, and the cart is pushed along the shelf. PersonDistance starts
+///    following the product when recognition asks "Is this Oat milk?".
+/// 2. **Centering:** after Yes (`centerOnProduct()`), the arm turns in small steps toward the
+///    product's box, which PersonDistance tracks on every check, until it's in the middle of the
+///    frame, so it stays centered while the cart moves.
+/// 3. **Guiding the hand:** PersonDistance keeps the product's place (`anchorProduct()`), the arm
 ///    holds still, and the watch plays `productFound`. A few times a second, `HandGuide` finds the
 ///    fingertip on screen and PersonDistance reads its depth: the watch buzzes left, right, up or
 ///    down until the hand is lined up, then "reach further" until it touches the product.
-/// 5. **Done:** the fingertip has touched the product, in depth, for a moment. The watch plays
+/// 4. **Done:** the fingertip has touched the product, in depth, for a moment. The watch plays
 ///    success and `onFinished(.pickedUp)` checks the item off.
 ///
 /// If the product is lost while centering, `onFinished(.lost)`, and the item is looked for again.
 /// Without a depth reading (no LiDAR, or none valid while centering), hand guiding falls back to
 /// the screen alone (`isDepthGuided` is false), where covering the product counts as on it.
 ///
-/// The arm stays still in step 4 on purpose: the hand covers the product, so computer vision
+/// The arm stays still in step 3 on purpose: the hand covers the product, so computer vision
 /// would lose it, and a moving phone would move the target the hand is aiming for.
 ///
 /// Frames come from the app's one ARKit session (`CameraService`), so it only works while
@@ -32,7 +33,7 @@ import PersonDistanceIOS
 @Observable
 final class PickupGuide {
     enum Phase: Equatable {
-        case idle, searching, holding, centering, guidingHand, done
+        case idle, centering, guidingHand, done
     }
 
     enum Outcome {
@@ -59,8 +60,8 @@ final class PickupGuide {
 
     /// Checks in a row with the product centered before the arm stops and hand guiding starts.
     private let centeredFramesNeeded = 3
-    /// How often centering reads PersonDistance's box for the product.
-    private let centerCheckInterval: Duration = .milliseconds(150)
+    /// How often centering reads PersonDistance's box for the product (it tracks at the same rate).
+    private let centerCheckInterval: Duration = .milliseconds(50)
     /// How long a centered product may go without a valid depth reading before hand guiding
     /// starts without depth.
     private let anchorWait: Duration = .seconds(3)
@@ -71,10 +72,6 @@ final class PickupGuide {
     private let onItemFramesNeeded = 4
     /// With no hand in view this long, the watch stops buzzing an old direction.
     private let noHandTimeout: Duration = .seconds(2)
-    /// How long the arm holds each sweep pose, so recognition gets a few frames there.
-    private let sweepDwell: Duration = .milliseconds(1200)
-    /// How long the arm stays still when recognition half-sees the item, so it can make sure.
-    private let candidateHold: Duration = .seconds(3)
     /// How often the hand is checked. Vision takes ~20 ms per frame.
     private let handCheckInterval: Duration = .milliseconds(120)
 
@@ -87,11 +84,6 @@ final class PickupGuide {
     @ObservationIgnored private let handGuide = HandGuide()
     @ObservationIgnored private let reachPolicy = HandReachPolicy()
     @ObservationIgnored private let visionQueue = DispatchQueue(label: "shellapp.handguide")
-    /// The sides `search(sides:)` sweeps, for `resumeSearch()`, their poses, and the next one.
-    @ObservationIgnored private var sides: [ArmController.ShelfSide] = []
-    @ObservationIgnored private var poses: [ArmController.Pose] = []
-    @ObservationIgnored private var nextPose = 0
-    @ObservationIgnored private var sweep: Task<Void, Never>?
     @ObservationIgnored private var centering: Task<Void, Never>?
     @ObservationIgnored private var handChecks: Task<Void, Never>?
     @ObservationIgnored private var candidate: HandGuide.Advice?
@@ -109,54 +101,9 @@ final class PickupGuide {
 
     // MARK: Controls
 
-    /// Sweeps the shelf on `sides` (left first when both) over and over while recognition looks,
-    /// until `hold()`, `centerOnProduct()` or `stop()`. Does nothing with no sides.
-    func search(sides: [ArmController.ShelfSide]) {
-        stop()
-        self.sides = sides
-        guard !sides.isEmpty else { return }
-        phase = .searching
-        poses = sides.flatMap { arm.sweepPoses(facing: $0) }
-        nextPose = 0
-        sweep = sweeping(after: .zero)
-    }
-
-    /// Recognition half-sees the item (a candidate, not yet sure): the arm stays where it is for
-    /// `candidateHold`, then sweeps on from there, unless recognition asks first (`hold()`).
-    func holdBriefly() {
-        guard phase == .searching else { return }
-        sweep?.cancel()
-        sweep = sweeping(after: candidateHold)
-    }
-
-    private func sweeping(after delay: Duration) -> Task<Void, Never> {
-        Task {
-            if delay > .zero { try? await Task.sleep(for: delay) }
-            while !Task.isCancelled && !poses.isEmpty {
-                arm.move(to: poses[nextPose % poses.count])
-                nextPose = (nextPose + 1) % poses.count
-                try? await Task.sleep(for: sweepDwell)
-            }
-        }
-    }
-
-    /// Recognition is asking about what it sees: the arm stays where it is.
-    func hold() {
-        sweep?.cancel()
-        sweep = nil
-        phase = .holding
-    }
-
-    /// The shopper said No: sweep again.
-    func resumeSearch() {
-        search(sides: sides)
-    }
-
     /// The shopper said Yes and PersonDistance is measuring the product: turn onto it, keep its
     /// place, and guide the hand to it.
     func centerOnProduct() {
-        sweep?.cancel()
-        sweep = nil
         centering?.cancel()
         phase = .centering
         centering = Task {
@@ -191,8 +138,6 @@ final class PickupGuide {
     /// Stops everything and turns off any hand-guide buzzing. PersonDistance is stopped by its
     /// owner (`ItemScanner`).
     func stop() {
-        sweep?.cancel()
-        sweep = nil
         centering?.cancel()
         centering = nil
         handChecks?.cancel()

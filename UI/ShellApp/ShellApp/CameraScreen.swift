@@ -43,8 +43,8 @@ struct CameraScreen: View {
                 .padding(.bottom, 8)
             }
         }
-        // Top left, one under the other: what the camera is looking for, then (Debug builds) the
-        // tester bar and the hand-guide test panel.
+        // Top left, one under the other: what the camera is looking for, then (Debug builds, tester
+        // mode) the tester bar.
         .overlay(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 8) {
                 if let target = model.scanner.target {
@@ -77,7 +77,6 @@ struct CameraScreen: View {
                 if model.trials.isEnabled, model.scanner.target != nil, !showsTroubleshooting {
                     TesterBar()
                 }
-                if !showsTroubleshooting { PickupTestPanel() }
                 #endif
             }
             .padding(.leading, 16)
@@ -231,33 +230,6 @@ private struct TesterBar: View {
         .overlay {
             RoundedRectangle(cornerRadius: 22).strokeBorder(.orange.opacity(0.6))
         }
-    }
-}
-#endif
-
-#if DEBUG
-/// Debug-only buttons for testing hand guiding without recognition, and pickup's state (phase,
-/// advice, and whether it has depth). In the top-left column, so they stay clear of the X.
-private struct PickupTestPanel: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let pickup = model.pickup
-        HStack {
-            Button("Test hand guide") { pickup.testHandGuide() }
-            Button("Stop") { pickup.stop() }
-            Text(status(pickup))
-                .font(.caption.monospaced())
-        }
-        .buttonStyle(.bordered)
-        .padding(8)
-        .background(.black.opacity(0.6), in: .rect(cornerRadius: 12))
-    }
-
-    private func status(_ pickup: PickupGuide) -> String {
-        let advice = pickup.advice.map { "\($0)" } ?? "–"
-        let guidance = pickup.phase == .guidingHand ? (pickup.isDepthGuided ? " · depth" : " · 2D") : ""
-        return "\(pickup.phase) · \(advice)\(guidance)"
     }
 }
 #endif
