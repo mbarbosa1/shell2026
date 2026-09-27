@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Extract Target (Redsky API) product data from HAR captures into a JSON
-file that the SwiftData importer (SwiftData/ProductImporter.swift) can load.
+file that the SwiftData importer (UI/ShellApp/ShellApp/Catalog/ProductImporter.swift) can load.
 
 Usage:
     python3 extract_har.py milk.har others.har -o output/products.json

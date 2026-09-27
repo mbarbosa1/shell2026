@@ -20,6 +20,12 @@
 			path = ShellApp;
 			sourceTree = "<group>";
 		};
+		5A1000000000000000000021 /* Data */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = Data;
+			path = ../../Scripts/output;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -38,6 +44,7 @@
 			isa = PBXGroup;
 			children = (
 				5A1000000000000000000002 /* ShellApp */,
+				5A1000000000000000000021 /* Data */,
 				5A1000000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -67,6 +74,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				5A1000000000000000000002 /* ShellApp */,
+				5A1000000000000000000021 /* Data */,
 			);
 			name = ShellApp;
 			packageProductDependencies = (

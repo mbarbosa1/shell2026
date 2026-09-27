@@ -48,6 +48,7 @@ final class AppModel {
 
     init(container: ModelContainer) {
         self.container = container
+        ProductImporter.importIfChanged(into: container.mainContext)
         currentList = Self.openList(in: container.mainContext)
         highlightedItemID = currentList.sortedItems.last?.id
         refresh()
@@ -216,12 +217,14 @@ final class AppModel {
         let rows = lists.map { list in
             let items = list.sortedItems.map { item in
                 "   • \(item.name) | quantity \(item.quantity) | label \(item.label ?? "nil") | brand \(item.brand ?? "nil")"
-                    + " | aisle \(item.aisle.map(String.init) ?? "nil") | block \(item.block ?? "nil") | in cart \(item.isCollected)"
+                    + " | aisle \(item.aisle.map(String.init) ?? "nil") | block \(item.block ?? "nil")"
+                    + " | price \(item.price.map { String(format: "%.2f", $0) } ?? "nil") | tcin \(item.tcin ?? "nil") | in cart \(item.isCollected)"
             }
             let header = "🗄️ List \(list.number) (\(list.isOpen ? "open" : "finished"), \(list.history.count) history events)"
             return ([header] + (items.isEmpty ? ["   (no items)"] : items)).joined(separator: "\n")
         }
-        return rows.joined(separator: "\n")
+        let products = (try? context.fetchCount(FetchDescriptor<Product>())) ?? 0
+        return (rows + ["📦 Product catalog: \(products) products"]).joined(separator: "\n")
     }
     #endif
     //as soon as you finish the user session it doesnt import into the database

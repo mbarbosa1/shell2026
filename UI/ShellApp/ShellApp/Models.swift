@@ -1,12 +1,30 @@
 import Foundation
 import SwiftData
 
-/// The on-device grocery database (SwiftData).
+/// The on-device database (SwiftData). One container, two files:
+/// - `default.store`: the user's grocery lists. Never replaced.
+/// - `catalog.store`: the product catalog (Target products with aisle and block) from the bundled
+///   `Scripts/output/products.json`. `ProductImporter.importIfChanged` rebuilds it when that file changes,
+///   without touching the lists.
 enum GroceryDatabase {
-    static let schema = Schema([GroceryList.self, GroceryItem.self, ListEvent.self])
+    static let listSchema = Schema([GroceryList.self, GroceryItem.self, ListEvent.self])
+    static let catalogSchema = Schema([Product.self, StoreLocation.self])
+    static let schema = Schema([
+        GroceryList.self, GroceryItem.self, ListEvent.self, Product.self, StoreLocation.self,
+    ])
 
     static func container(inMemory: Bool = false) throws -> ModelContainer {
-        try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: inMemory))
+        let lists: ModelConfiguration
+        let catalog: ModelConfiguration
+        if inMemory {
+            lists = ModelConfiguration("Lists", schema: listSchema, isStoredInMemoryOnly: true)
+            catalog = ModelConfiguration("Catalog", schema: catalogSchema, isStoredInMemoryOnly: true)
+        } else {
+            // The lists keep the file they've always used, so existing lists carry over.
+            lists = ModelConfiguration(schema: listSchema, url: .applicationSupportDirectory.appending(path: "default.store"))
+            catalog = ModelConfiguration(schema: catalogSchema, url: .applicationSupportDirectory.appending(path: "catalog.store"))
+        }
+        return try ModelContainer(for: schema, configurations: lists, catalog)
     }
 }
 
@@ -82,6 +100,12 @@ final class GroceryItem: ItemDescribing {
     /// Store location, matching the product database's `StoreLocation`: aisle 44 in block "G".
     var aisle: Int?
     var block: String?
+    /// Store floor, e.g. "01". Only matters in multi-floor stores.
+    var floor: String?
+    /// Target's ID for the matched catalog product (`Product.tcin`), so its details can be looked up again.
+    var tcin: String?
+    /// Price when the item was matched. Kept on the item so past trips show what it cost that day.
+    var price: Double?
     var isCollected = false
     var addedAt: Date
     /// When the item went in the cart.
@@ -101,6 +125,20 @@ final class GroceryItem: ItemDescribing {
         self.aisle = aisle
         self.block = block
         self.addedAt = addedAt
+    }
+
+    /// Copies a catalog product's details onto this item: its link, price, and store location.
+    /// Brand, size and location are only filled when empty, so what the user said is never overwritten.
+    func fill(from product: Product) {
+        tcin = product.tcin
+        price = product.currentPrice
+        if brand == nil { brand = product.brand }
+        if size == nil { size = product.size }
+        if let spot = product.primaryLocation, aisle == nil || block == nil {
+            aisle = spot.aisle
+            block = spot.block
+            floor = spot.floor
+        }
     }
 }
 

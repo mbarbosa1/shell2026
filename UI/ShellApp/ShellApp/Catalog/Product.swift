@@ -10,6 +10,11 @@ final class Product {
     var parentTitle: String?
     var itemType: String?
     var itemTypeId: String?
+    /// Store brand from the end of the title, e.g. "Good & Gather™". Nil for name brands, whose
+    /// brand is part of the product name ("Ball Park Beef Franks"). Set by `ProductImporter`.
+    var brand: String?
+    /// From the title, e.g. "1gal", "15oz/8ct", "each", "per lb". Set by `ProductImporter`.
+    var size: String?
 
     var buyURL: URL?
     var primaryImageURL: URL?
@@ -43,10 +48,13 @@ final class Product {
         return currentPrice < regularPrice
     }
 
-    /// Primary location as shown in the Target app, e.g. "G44".
-    var locationLabel: String? {
-        locations.sorted { ($0.block, $0.aisle) < ($1.block, $1.aisle) }.first?.label
+    /// Main location, the first by block then aisle. Some products are stocked in several spots.
+    var primaryLocation: StoreLocation? {
+        locations.sorted { ($0.block, $0.aisle) < ($1.block, $1.aisle) }.first
     }
+
+    /// Primary location as shown in the Target app, e.g. "G44".
+    var locationLabel: String? { primaryLocation?.label }
 }
 
 /// One aisle/block/floor position of a product in the store.

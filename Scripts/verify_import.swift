@@ -1,7 +1,7 @@
 // Compile-and-run check for the SwiftData models and importer, using an in-memory store.
 // Needs full Xcode (SwiftData macros). run.sh uses it automatically when Xcode is selected, or:
-//   swiftc -parse-as-library SwiftData/*.swift verify_import.swift -o .build/verify && .build/verify output/products.json
-
+//   swiftc -parse-as-library ../UI/ShellApp/ShellApp/Catalog/*.swift verify_import.swift -o .build/verify && .build/verify output/products.json
+// runs when full Xcode is selected. It loads the products into a temporary in-memory database twice to make sure the second load doesn't create duplicates. It also stops with an error if any product is missing an aisle/block location, and prints a few sample products.
 import Foundation
 import SwiftData
 
