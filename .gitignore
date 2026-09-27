@@ -10,6 +10,7 @@ xcuserdata/
 
 ## Obj-C/Swift specific
 *.hmap
+*.env
 
 ## App packaging
 *.ipa
@@ -64,3 +65,6 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Secrets
+.env
