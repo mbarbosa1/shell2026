@@ -199,6 +199,7 @@ final class VoiceAgent {
 
         case "add_grocery_item", "add_item":
             guard let name else { return ("Missing parameter: name.", true) }
+            if let error = Self.missingAisleError(Self.int(parameters["aisle"])) { return error }
             let item = GroceryItem(
                 name: name,
                 brand: Self.text(parameters["brand"]),
@@ -221,6 +222,7 @@ final class VoiceAgent {
             guard let name else { return ("Missing parameter: name.", true) }
             let quantity = Self.int(parameters["quantity"])
             let aisle = Self.int(parameters["aisle"])
+            if let error = Self.missingAisleError(aisle) { return error }
             let block = Self.text(parameters["block"])
             let isCollected = Self.bool(parameters["in_cart"])
             let brand = Self.text(parameters["brand"]), label = Self.text(parameters["label"]), size = Self.text(parameters["size"])
@@ -244,6 +246,7 @@ final class VoiceAgent {
             guard let aisle = Self.int(parameters["aisle"]), let block = Self.text(parameters["block"]) else {
                 return ("Missing parameter: aisle and block are both needed.", true)
             }
+            if let error = Self.missingAisleError(aisle) { return error }
             return model.updateItem(named: name, aisle: aisle, block: block, source: .voice)
                 ? ("\(name) is in block \(block.uppercased()), aisle \(aisle).", false)
                 : ("\(name) isn't on the list.", true)
@@ -377,6 +380,15 @@ final class VoiceAgent {
     }
 
     /// The agent may send numbers as integers, decimals, or text.
+    /// Aisles this store doesn't have, so nothing can be put in them. The catalog has none of them
+    /// either (Scripts/output/products.json).
+    private static let missingAisles: Set<Int> = [10]
+
+    private static func missingAisleError(_ aisle: Int?) -> (String, Bool)? {
+        guard let aisle, missingAisles.contains(aisle) else { return nil }
+        return ("There's no aisle \(aisle) in this store.", true)
+    }
+
     private static func int(_ value: Any?) -> Int? {
         switch value {
         case let number as Int: return number

@@ -11,8 +11,9 @@ import PersonDistanceIOS
 /// by the meters `progress` reports, and off everywhere else, so no frame is looked at on the way
 /// to a stop. Items are looked for one at a time, in the order given.
 ///
-/// Once the camera settles on the item, the user is asked "Is this Oat milk?". Yes puts it in the
-/// cart (`found`), no keeps looking. While looking, a hint like "Move more to the left" is said when
+/// Once the camera settles on the item, the user is asked "Is this Oat milk?". Yes hands it to the
+/// arm and hand guide (`pickUp`) when they're set up, and it goes in the cart (`found`) once the
+/// hand reaches it; otherwise yes puts it straight in the cart. No keeps looking. While looking, a hint like "Move more to the left" is said when
 /// it changes, at most every `hintInterval`. Everything goes out through `announce`: spoken, and
 /// played on the watch.
 @MainActor
@@ -36,6 +37,16 @@ final class ItemScanner {
     @ObservationIgnored var announce: (String, WatchHaptic?) -> Void = { _, _ in }
     /// Puts the list item with this id in the cart. Set by `AppModel`.
     @ObservationIgnored var found: (UUID) -> Void = { _ in }
+    /// Called with each new item looked for, and nil when there's none, so the arm can turn to
+    /// its shelf. Set by `AppModel`.
+    @ObservationIgnored var targetChanged: (ScanTarget?) -> Void = { _ in }
+    /// Which way the arm points the camera. Turned to a side, left and right in the image are
+    /// ahead and behind along the shelf, so those hints tell the user to push or pull the cart.
+    /// Set by `AppModel`.
+    @ObservationIgnored var facing = StoreMap.Side.ahead
+    /// Hands the confirmed item to the arm and hand guide (`PickupGuide.track`), with where it is in
+    /// the frame. The scanner pauses until `pickUpEnded`. Set by `AppModel`.
+    @ObservationIgnored var pickUp: ((CGRect) -> Void)?
     /// Measures `objectMeters`. Set by `AppModel`.
     @ObservationIgnored var depth: ProductDepthEstimator?
     /// Baseline trials in tester mode: every item scan is one. It also holds the OCR language
@@ -54,6 +65,11 @@ final class ItemScanner {
     @ObservationIgnored private var spokenHint: String?
     @ObservationIgnored private var spokenAt: TimeInterval = -.infinity
     @ObservationIgnored private var toldToMoveOn = false
+    /// Where the item was last seen in the frame, in Vision coordinates (0–1, origin at the bottom
+    /// left, in the upright image), for `pickUp`.
+    @ObservationIgnored private var productBox: CGRect?
+    /// Between a yes and `pickUpEnded`: the hand guide has the camera, so frames aren't looked at.
+    @ObservationIgnored private var isPickingUp = false
 
     /// Starts looking for `targets`: at the stop just reached on a walk, or right away for a test scan.
     func begin(_ targets: [ScanTarget], mode: TrialRecorder.Mode = .walk,
@@ -82,6 +98,7 @@ final class ItemScanner {
         progress = { (nil, false) }
         stopTarget()
         target = nil
+        targetChanged(nil)
     }
 
     /// Call when the list changes. Moves on when the item being looked for is in the cart or gone.
@@ -98,8 +115,13 @@ final class ItemScanner {
         if yes {
             trials?.finish(.accepted)
             Task { await coordinator.acceptInsight() }
-            // A test scan only measures recognition; the list stays as it is.
-            if mode == .testScan { stopTarget() } else { found(target.listItemID) }
+            if let pickUp, let productBox {
+                isPickingUp = true
+                hint = nil
+                pickUp(productBox)
+            } else {
+                finish(target)
+            }
         } else {
             trials?.rejected()
             Task { await coordinator.rejectInsight() }
@@ -107,10 +129,24 @@ final class ItemScanner {
         }
     }
 
+    /// The hand guide is done with the item `pickUp` handed it: the hand reached it, or the arm
+    /// lost it first and it's looked for again.
+    func pickUpEnded(reached: Bool) {
+        guard isPickingUp, let target else { return }
+        isPickingUp = false
+        if reached {
+            finish(target)
+        } else {
+            announce("Lost \(target.name). Looking again.", nil)
+            queue.insert(target, at: 0)
+            next(announcing: false)
+        }
+    }
+
     /// A camera image from ARKit. The phone is mounted upright, so ARKit's landscape image is turned
     /// a quarter turn right. Frames taken while the lens refocuses aren't counted as evidence.
     func receive(_ buffer: CVPixelBuffer, at time: TimeInterval, isAdjustingFocus: Bool) {
-        guard !busy, let coordinator, let target else { return }
+        guard !busy, !isPickingUp, let coordinator, let target else { return }
         let (meters, reliable) = progress()
         let context = RecognitionContext(
             targetItemID: target.catalog.targetID,
@@ -140,14 +176,21 @@ final class ItemScanner {
 
     // MARK: Private
 
+    /// The item is found. A test scan only measures recognition; the list stays as it is.
+    private func finish(_ target: ScanTarget) {
+        if mode == .testScan { stopTarget() } else { found(target.listItemID) }
+    }
+
     private func next(announcing: Bool) {
         stopTarget()
         guard !queue.isEmpty else {
             target = nil
+            targetChanged(nil)
             return
         }
         let target = queue.removeFirst()
         self.target = target
+        targetChanged(target)
         // The navigator already named the stop's items on arrival.
         if announcing { announce("Now looking for \(target.name).", nil) }
         let run = run
@@ -194,9 +237,28 @@ final class ItemScanner {
         spokenHint = nil
         spokenAt = -.infinity
         toldToMoveOn = false
+        productBox = nil
+        isPickingUp = false
+    }
+
+    /// Where the item is in the frame, in Vision coordinates: the one object in view, or with
+    /// several, the one the catalog picked. Nil when there's no telling.
+    private static func productBox(in update: RecognitionUpdate, imageSize: CGSize) -> CGRect? {
+        let boxes = update.assessment?.objectBoxes ?? []
+        guard boxes.count > 1 else { return boxes.first }
+        guard let focused = update.focusedObject else { return nil }
+        // `focusedObject` is in the camera buffer's pixels: pick the box that crops to it.
+        func overlap(_ box: CGRect) -> CGFloat {
+            guard let crop = try? VisionRegionOfInterest.pixelCrop(
+                normalizedRegion: box, imageSize: imageSize, orientation: .right) else { return 0 }
+            let common = crop.intersection(focused)
+            return common.isNull ? 0 : common.width * common.height
+        }
+        return boxes.max { overlap($0) < overlap($1) }
     }
 
     private func handle(_ update: RecognitionUpdate, at time: TimeInterval, imageSize: CGSize) {
+        if let box = Self.productBox(in: update, imageSize: imageSize) { productBox = box }
         // A settled answer repeats on every frame until answered: one question, one recorded frame.
         if update.awaitingVerdict && question != nil {
             if update.advanceNotice != nil { trials?.timedOut() }
@@ -227,24 +289,49 @@ final class ItemScanner {
         objectMeters = depth?.range(
             focused: update.focusedObject, region: update.assessment?.objectRegion,
             objectCount: update.assessment?.objectBoxes.count ?? 0, imageSize: imageSize)
-        hint = update.guidance?.message
+        hint = update.guidance.map { $0.message(facing: facing) }
         guard let guidance = update.guidance, hint != spokenHint, time - spokenAt >= Self.hintInterval else {
             if hint == nil { spokenHint = nil }
             return
         }
         spokenHint = hint
         spokenAt = time
-        announce(guidance.message, guidance.haptic)
+        announce(guidance.message(facing: facing), guidance.haptic(facing: facing))
     }
 }
 
 private extension RecognitionGuidance {
-    /// Left and right are taps on the watch, like turns.
-    var haptic: WatchHaptic? {
-        switch self {
-        case .moveLeft: .left
-        case .moveRight: .right
+    /// Which way along the shelf "left" and "right" in the image are, with the camera turned to
+    /// `side`: facing right, the image's left is ahead of the cart; facing left, it's behind.
+    /// Nil for any other hint, or with the camera facing ahead.
+    private func along(facing side: StoreMap.Side) -> Bool? {
+        switch (self, side) {
+        case (.moveLeft, .right), (.moveRight, .left): true
+        case (.moveLeft, .left), (.moveRight, .right): false
         default: nil
+        }
+    }
+
+    func message(facing side: StoreMap.Side) -> String {
+        switch along(facing: side) {
+        case true?: "Push the cart forward a little"
+        case false?: "Pull the cart back a little"
+        case nil: message
+        }
+    }
+
+    /// Left and right are taps on the watch, like turns. Forward along the shelf is the "go" cue;
+    /// back has none, so only the words say it.
+    func haptic(facing side: StoreMap.Side) -> WatchHaptic? {
+        switch along(facing: side) {
+        case true?: return .go
+        case false?: return nil
+        case nil: break
+        }
+        switch self {
+        case .moveLeft: return .left
+        case .moveRight: return .right
+        default: return nil
         }
     }
 }

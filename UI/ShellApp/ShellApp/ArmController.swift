@@ -18,17 +18,30 @@ final class ArmController {
         var tilt: Int
     }
 
-    enum ShelfSide { case left, right }
-
     // MARK: Calibrate these on the real arm
 
+    /// Pan angle with the phone facing straight ahead. Every "Ahead" goes back to exactly this
+    /// angle. Above 90, because the pan servo runs out of travel below about 45: the holder is
+    /// seated on the servo facing straight at this angle, so both sides have room.
+    static let panAhead = 110
+    /// How far "left" and "right" turn from `panAhead`, the same amount both ways. Make it
+    /// negative if left and right come out swapped.
+    static let panToSide = 45
+    /// Tilt angle with the phone level. Up and down are measured from here.
+    static let tiltLevel = 90
+    /// How far the phone may tilt up, and the same amount down.
+    static let tiltToEdge = 30
     /// Phone facing straight ahead, level.
-    static let home = Pose(pan: 90, tilt: 90)
+    static let home = Pose(pan: panAhead, tilt: tiltLevel)
     /// Pan angles that face the shelf on the user's left and right.
-    static let panFacingLeft = 150
-    static let panFacingRight = 30
-    static let panRange = 25...155
-    static let tiltRange = 60...120
+    static let panFacingLeft = panAhead + panToSide
+    static let panFacingRight = panAhead - panToSide
+    /// How far the arm may ever turn, the same both ways: no further than facing a shelf, so
+    /// following a product can't drive it into the right side's end of travel. Must stay within
+    /// the firmware's 20–160.
+    static let panRange = (panAhead - panToSide)...(panAhead + panToSide)
+    /// How far the arm may ever tilt: `tiltToEdge` up and the same down.
+    static let tiltRange = (tiltLevel - tiltToEdge)...(tiltLevel + tiltToEdge)
     /// True when the two tilt servos face each other, so tilting up means one angle goes up and
     /// the other goes down (tilt1 = 180 - tilt2). False when they turn the same way (tilt1 = tilt2).
     /// Check with the Serial Monitor test: whichever setting tilts the clamp without twisting it.
@@ -75,12 +88,18 @@ final class ArmController {
         move(to: Self.home)
     }
 
+    /// Turns the phone to a shelf, level, for scanning it while the cart moves. Nil (no side on
+    /// the map) faces straight ahead.
+    func face(_ side: StoreMap.Side?) {
+        move(to: Pose(pan: Self.pan(facing: side ?? .ahead), tilt: Self.home.tilt))
+    }
+
     /// Where to look while searching one side's shelf: three pan angles across the shelf,
     /// each at eye level, higher, and lower, so a whole section gets seen.
-    func sweepPoses(facing side: ShelfSide) -> [Pose] {
-        let middle = side == .left ? Self.panFacingLeft : Self.panFacingRight
+    func sweepPoses(facing side: StoreMap.Side) -> [Pose] {
+        let middle = Self.pan(facing: side)
         return [-20, 0, 20].flatMap { panOffset in
-            [90, 70, 110].map { tilt in Pose(pan: middle + panOffset, tilt: tilt) }
+            [0, -20, 20].map { tiltOffset in Pose(pan: middle + panOffset, tilt: Self.tiltLevel + tiltOffset) }
         }
     }
 
@@ -101,6 +120,14 @@ final class ArmController {
         let before = pose
         move(to: next)
         return pose != before
+    }
+
+    private static func pan(facing side: StoreMap.Side) -> Int {
+        switch side {
+        case .left: panFacingLeft
+        case .right: panFacingRight
+        case .ahead: home.pan
+        }
     }
 
     /// Degrees to turn for a product `offset` (-0.5…0.5) from the center. 0 inside the dead zone.
