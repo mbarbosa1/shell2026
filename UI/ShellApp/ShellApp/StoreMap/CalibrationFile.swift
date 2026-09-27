@@ -18,11 +18,34 @@ struct CalibrationFile: Decodable {
         let from: String
         let to: String
         let lengthMeters: Double
+        /// Later walks along the edge, in either direction.
+        let returns: [Return]
+    }
+
+    /// A walk back along an edge, e.g. to reach a node that had already been marked.
+    struct Return: Decodable {
+        let id: String
+        let from: String
+        let to: String
+    }
+
+    /// The positions sampled along a walk: an edge's first walk (`edge`) or a return (`returnId`).
+    struct Path: Decodable {
+        let edge: String?
+        let returnId: String?
+        let points: [[Double]]
+
+        enum CodingKeys: String, CodingKey {
+            case edge, points
+            case returnId = "return"
+        }
     }
 
     let store: String
     let nodes: [Node]
     let edges: [Edge]
+    let paths: [Path]
+    let returnPaths: [Path]
 
     func node(_ id: String) -> Node? { nodes.first { $0.id == id } }
 

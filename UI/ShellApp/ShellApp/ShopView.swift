@@ -73,7 +73,7 @@ struct ShopView: View {
                             .accessibilityHint("Shows the shortest way through the store to everything on your list")
                     }
 
-                    Button("Start shopping") { model.isCameraOpen = true }
+                    Button("Start shopping") { model.startShopping() }
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityHint("Opens the camera on the shopping mount")
                 }

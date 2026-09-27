@@ -1,18 +1,17 @@
 import SwiftUI
 
-/// Full-screen camera. The mount aims the phone, so the only thing on top of the feed
-/// is the small "In your cart" panel.
+/// Full-screen camera. The mount aims the phone, so the only things on top of the feed
+/// are the small "In your cart" panel and the X to leave.
+/// The feed is `AppModel`'s ARKit session, started by "Start shopping".
 struct CameraScreen: View {
     @Environment(AppModel.self) private var model
-    @State private var camera = CameraService()
-    @State private var isRunning = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
 
-            if isRunning {
-                CameraPreview(session: camera.session)
+            if model.camera.isRunning {
+                CameraPreview(session: model.camera.session)
                     .ignoresSafeArea()
             }
 
@@ -20,11 +19,19 @@ struct CameraScreen: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
         }
-        .task { isRunning = await camera.start() }
-        .onDisappear { camera.stop() }
-        // Temporary way out while there's no voice command: double-tap anywhere.
-        .onTapGesture(count: 2) { model.isCameraOpen = false }
-        .accessibilityAction(.escape) { model.isCameraOpen = false }
+        .overlay(alignment: .topTrailing) {
+            Button { model.endShopping() } label: {
+                Image(systemName: "xmark")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
+                    .background(.black.opacity(0.6), in: Circle())
+            }
+            .padding(.trailing, 16)
+            .accessibilityLabel("Close camera")
+            .accessibilityHint("Stops shopping directions and closes the camera")
+        }
+        .accessibilityAction(.escape) { model.endShopping() }
     }
 }
 

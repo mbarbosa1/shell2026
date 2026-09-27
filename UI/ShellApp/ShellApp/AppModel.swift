@@ -41,11 +41,23 @@ final class AppModel {
     var voiceError: String?
     /// The most recently added item gets an outline.
     var highlightedItemID: UUID?
+    /// The camera screen is up. Only `startShopping()`, the X (`endShopping()`) and reaching the
+    /// cashier change it.
     var isCameraOpen = false
+    /// The one ARKit session: the camera feed, and the tracking navigation walks by.
+    let camera = CameraService()
+    /// The walk through the store, while one is going (see `NavigationScreen`).
+    private(set) var navigator: RouteNavigator?
+    var isNavigating: Bool {
+        get { navigator != nil }
+        set { if !newValue { stopNavigation() } }
+    }
 
     @ObservationIgnored private let container: ModelContainer
     @ObservationIgnored private var context: ModelContext { container.mainContext }
     @ObservationIgnored private var voice: VoiceAgent?
+    @ObservationIgnored private let narrator = Narrator()
+    @ObservationIgnored private let watch = WatchLink()
 
     init(container: ModelContainer) {
         self.container = container
@@ -78,6 +90,94 @@ final class AppModel {
         guard let last = added.last else { return }
         highlightedItemID = last.id
         confirmation = added.count == 1 ? "\(last.name) added to your list" : "\(added.count) usuals added to your list"
+    }
+
+    // MARK: Navigation
+
+    /// What's left on the list, for the route planner.
+    var routeItems: [RoutePlanner.Item] {
+        items.filter { !$0.isCollected }.map { RoutePlanner.Item(name: $0.name, location: $0.location) }
+    }
+
+    /// "Start shopping", from the button or the voice agent. The user is always at the store's
+    /// starting point, so tracking starts (and is measured from) here. The camera stays on until
+    /// the route reaches the cashier or the user taps the X.
+    func startShopping() {
+        guard !isCameraOpen else { return }
+        isCameraOpen = true
+        Task {
+            let tracking = await camera.start()
+            // The X was tapped while the camera permission prompt was up.
+            guard isCameraOpen else {
+                camera.stop()
+                return
+            }
+            // No ARKit (simulator) or no camera permission: walk the route by hand instead.
+            startNavigation(simulated: !tracking)
+        }
+    }
+
+    /// The X on the camera screen: the user leaves before reaching the cashier.
+    func endShopping() {
+        stopNavigation()
+        closeCamera()
+    }
+
+    /// The route reached the cashier. Doesn't stop the narrator, so the cashier message is heard.
+    private func finishShopping() {
+        UIApplication.shared.isIdleTimerDisabled = false
+        closeCamera()
+    }
+
+    private func closeCamera() {
+        camera.stop()
+        isCameraOpen = false
+    }
+
+    /// Starts guiding the user through the store. Simulated when asked, or when the phone can't
+    /// run ARKit world tracking (e.g. the simulator).
+    func startNavigation(simulated: Bool = false) {
+        navigator?.stop()
+        let navigator = RouteNavigator(
+            map: .target,
+            simulated: simulated || !PositionTracker.isSupported,
+            session: camera.session,
+            remainingItems: { [weak self] in self?.routeItems ?? [] },
+            announce: { [weak self] text, haptic in self?.announce(text, haptic: haptic) },
+            onFinish: { [weak self] in self?.finishShopping() }
+        )
+        self.navigator = navigator
+        // The phone sits on the cart the whole walk: don't let it lock.
+        UIApplication.shared.isIdleTimerDisabled = true
+        navigator.start()
+        // Started from the route screen rather than "Start shopping": ARKit isn't running yet.
+        // Does nothing when it already is, so tracking isn't reset.
+        if !navigator.isSimulated {
+            Task {
+                _ = await camera.start()
+                if !isNavigating && !isCameraOpen { camera.stop() }
+            }
+        }
+    }
+
+    func stopNavigation() {
+        navigator?.stop()
+        navigator = nil
+        narrator.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
+        // The camera stays on while shopping; it only goes off at the cashier or with the X.
+        if !isCameraOpen { camera.stop() }
+    }
+
+    /// Plays the cue on the watch and says it: through VoiceOver when it's on, so the two
+    /// don't talk over each other, and the narrator otherwise.
+    private func announce(_ text: String, haptic: WatchHaptic?) {
+        watch.send(haptic, text: text)
+        if UIAccessibility.isVoiceOverRunning {
+            UIAccessibility.post(notification: .announcement, argument: text)
+        } else {
+            narrator.speak(text)
+        }
     }
 
     // MARK: Voice agent
@@ -113,6 +213,7 @@ final class AppModel {
         context.delete(item)
         log(.removed, removedName, source: source)
         save()
+        navigator?.itemsChanged()
         confirmation = "\(removedName) removed from your list"
         return true
     }
@@ -287,6 +388,7 @@ final class AppModel {
         item.collectedAt = isCollected ? .now : nil
         log(isCollected ? .checkedOff : .unchecked, item.name, source: source)
         save()
+        navigator?.itemsChanged()
     }
 
     private func log(_ kind: ListEvent.Kind, _ itemName: String?, source: ListEvent.Source) {

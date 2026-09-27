@@ -8,13 +8,11 @@ struct RouteView: View {
     private let map = StoreMap.target
 
     private var plan: RoutePlanner.Plan {
-        let items = model.items
-            .filter { !$0.isCollected }
-            .map { RoutePlanner.Item(name: $0.name, location: $0.location) }
-        return RoutePlanner(map: map).plan(for: items)
+        RoutePlanner(map: map).plan(for: model.routeItems)
     }
 
     var body: some View {
+        @Bindable var model = model
         let plan = plan
         NavigationStack {
             ScrollView {
@@ -55,6 +53,18 @@ struct RouteView: View {
                     if !plan.unlocated.isEmpty {
                         note("No aisle yet", plan.unlocated)
                     }
+
+                    if !plan.stops.isEmpty {
+                        VStack(spacing: 10) {
+                            Button("Start navigation") { model.startNavigation() }
+                                .buttonStyle(PrimaryButtonStyle())
+                                .accessibilityHint("Guides you there step by step, out loud and on your watch")
+                            #if DEBUG
+                            Button("Simulate the walk") { model.startNavigation(simulated: true) }
+                                .buttonStyle(SecondaryButtonStyle())
+                            #endif
+                        }
+                    }
                 }
                 .padding(16)
             }
@@ -66,6 +76,9 @@ struct RouteView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .fullScreenCover(isPresented: $model.isNavigating) {
+                NavigationScreen()
             }
             .overlay {
                 if plan.stops.isEmpty && plan.unmapped.isEmpty && plan.unlocated.isEmpty {
