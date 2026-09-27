@@ -18,6 +18,18 @@ public struct CatalogProductRecord: Sendable, Identifiable {
     public let brand: String?
     public let aliases: [String]
     public let locations: [CatalogLocation]
+    public let itemType: String?
+
+    public init(id: UUID, tcin: String, title: String, brand: String?, aliases: [String],
+                locations: [CatalogLocation], itemType: String? = nil) {
+        self.id = id
+        self.tcin = tcin
+        self.title = title
+        self.brand = brand
+        self.aliases = aliases
+        self.locations = locations
+        self.itemType = itemType
+    }
 }
 
 public struct CatalogActivationRecord: Sendable {

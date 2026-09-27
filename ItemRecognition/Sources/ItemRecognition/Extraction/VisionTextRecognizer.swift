@@ -59,9 +59,17 @@ public struct VisionTextRecognizer: TextRecognizing {
                 return RecognizedTextLine(
                     text: top.string,
                     confidence: top.confidence,
-                    boundingBox: observation.boundingBox
+                    boundingBox: Self.imageBox(observation.boundingBox, regionOfInterest: regionOfInterest)
                 )
             }
         }.value
+    }
+
+    /// Vision reports boxes relative to `regionOfInterest`. Map them to the whole
+    /// oriented image so lines can be compared with object boxes from the same frame.
+    static func imageBox(_ box: CGRect, regionOfInterest roi: CGRect?) -> CGRect {
+        guard let roi else { return box }
+        return CGRect(x: roi.minX + box.minX * roi.width, y: roi.minY + box.minY * roi.height,
+                      width: box.width * roi.width, height: box.height * roi.height)
     }
 }

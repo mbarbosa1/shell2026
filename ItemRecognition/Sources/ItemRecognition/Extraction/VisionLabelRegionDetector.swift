@@ -30,6 +30,10 @@ public struct VisionLabelRegionDetector: LabelRegionDetecting {
     }
 
     public func detectRegion(in image: RecognitionImage) async throws -> LabelRegionDetection {
+        try await detectRegion(in: image, within: nil)
+    }
+
+    public func detectRegion(in image: RecognitionImage, within objectRegion: CGRect?) async throws -> LabelRegionDetection {
         try TextExtractionScheduler.validate(image, crop: nil)
         let padding = paddingFraction
         let packageConfidence = minimumPackageConfidence
@@ -46,18 +50,24 @@ public struct VisionLabelRegionDetector: LabelRegionDetecting {
                                                 orientation: image.orientation, options: [:])
             try handler.perform([rectangles, text])
             let boxes = (text.results ?? []).map(\.boundingBox)
-            let candidates = (rectangles.results ?? []).map { PackageCandidate(boundingBox: $0.boundingBox, confidence: $0.confidence) }
+            let candidates: [PackageCandidate]
+            if let objectRegion {
+                candidates = [PackageCandidate(boundingBox: try VisionRegionOfInterest.normalized(pixelCrop: objectRegion,
+                    imageSize: image.imageResolution, orientation: image.orientation), confidence: 1)]
+            } else {
+                candidates = (rectangles.results ?? []).map { PackageCandidate(boundingBox: $0.boundingBox, confidence: $0.confidence) }
+            }
             let orientedHeight = Self.orientedSize(image.imageResolution, orientation: image.orientation).height
             let decision = Self.decide(textBoxes: boxes, packages: candidates, padding: padding,
                                        minimumPackageConfidence: packageConfidence,
                                        minimumTextHeight: textHeight, orientedImageHeight: orientedHeight)
             guard let region = decision.region else {
-                return LabelRegionDetection(crop: nil, guidance: decision.guidance)
+                return LabelRegionDetection(crop: nil, guidance: decision.guidance, readiness: decision.readiness)
             }
             let crop = try VisionRegionOfInterest.pixelCrop(normalizedRegion: region,
                                                             imageSize: image.imageResolution,
                                                             orientation: image.orientation)
-            return LabelRegionDetection(crop: crop, guidance: decision.guidance)
+            return LabelRegionDetection(crop: crop, guidance: decision.guidance, readiness: decision.readiness)
         }.value
     }
 
@@ -71,6 +81,7 @@ public struct VisionLabelRegionDetector: LabelRegionDetecting {
     struct Decision: Equatable {
         let region: CGRect?
         let guidance: RecognitionGuidance?
+        var readiness: LabelRegionDetection.Readiness = .readable
     }
 
     /// Items whose horizontal centre falls outside this band earn a left/right hint.
@@ -89,15 +100,18 @@ public struct VisionLabelRegionDetector: LabelRegionDetecting {
                        orientedImageHeight: CGFloat) -> Decision {
         guard let package = packageRegion(packages, minimumConfidence: minimumPackageConfidence) else {
             guard let union = paddedRegion(boxes: textBoxes, padding: padding) else {
-                return Decision(region: nil, guidance: .moveCloser)
+                return Decision(region: nil, guidance: nil, readiness: .unsuitable)
             }
             return Decision(region: union, guidance: horizontalGuidance(for: union))
         }
         let inside = textBoxes.map { $0.intersection(package) }.filter { !$0.isNull && !$0.isEmpty }
+        guard !inside.isEmpty else {
+            return Decision(region: nil, guidance: horizontalGuidance(for: package), readiness: .noText)
+        }
         guard isLegible(textBoxes: inside, orientedImageHeight: orientedImageHeight,
                         minimumTextHeight: minimumTextHeight) else {
             let far = package.width * package.height < smallPackageArea
-            return Decision(region: nil, guidance: far ? .moveCloser : .keepWalking)
+            return Decision(region: nil, guidance: far ? .moveCloser : .moveBack, readiness: .textTooSmall)
         }
         return Decision(region: paddedRegion(boxes: inside, padding: padding, within: package),
                         guidance: horizontalGuidance(for: package))

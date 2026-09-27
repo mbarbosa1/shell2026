@@ -1,7 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// One recognized line before normalization
+/// One recognized line before normalization. `boundingBox` is normalized
+/// lower-left relative to the whole oriented image, even when OCR read a region.
 public struct RecognizedTextLine: Sendable, Hashable {
     public let text: String
     public let confidence: Float

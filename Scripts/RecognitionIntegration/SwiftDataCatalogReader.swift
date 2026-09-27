@@ -24,7 +24,7 @@ public struct SwiftDataCatalogReader: CatalogReading {
             let texts = [record.title] + record.aliases + (record.brand.map { [$0] } ?? [])
             return CatalogItemSnapshot(id: record.id, catalogKey: record.tcin, displayName: record.title,
                 brand: record.brand, normalizedTerms: Set(texts.flatMap { normalizer.tokens(from: $0) }),
-                visual: mappings.metadata(for: record.tcin))
+                visual: mappings.metadata(for: record.tcin), itemType: record.itemType)
         }
         rule = records.activation.map {
             DetectionActivationRuleSnapshot(targetItemID: $0.productID, landmarkID: $0.landmarkID,

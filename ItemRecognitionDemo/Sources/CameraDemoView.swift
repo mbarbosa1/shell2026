@@ -7,9 +7,11 @@ struct CameraDemoView: View {
     @StateObject private var model: CameraDemoModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
+    private let onAccepted: (() -> Void)?
 
-    init(configuration: DemoScanConfiguration = .ocrOnly) {
+    init(configuration: DemoScanConfiguration = .ocrOnly, onAccepted: (() -> Void)? = nil) {
         _model = StateObject(wrappedValue: CameraDemoModel(configuration: configuration))
+        self.onAccepted = onAccepted
     }
 
     var body: some View {
@@ -36,9 +38,16 @@ struct CameraDemoView: View {
                     .background(Color.accentColor.opacity(0.15))
                     .accessibilityAddTraits(.updatesFrequently)
             }
+            if let advance = model.advanceNotice {
+                Text(advance)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.2))
+            }
             if model.awaitingVerdict {
                 InsightVerdict(insight: model.insight, mode: model.modeMessage,
-                               confirm: { model.confirmInsight() }, negate: { model.negateInsight() })
+                               confirm: { model.confirmInsight(); onAccepted?() }, negate: { model.negateInsight() })
             }
             if model.showsOCRExtraction {
                 OCRExtractionCard(candidates: model.candidates,
@@ -139,6 +148,7 @@ final class CameraDemoModel: ObservableObject {
     @Published private(set) var modeIsCloud = false
     @Published private(set) var awaitingVerdict = false
     @Published private(set) var insight = ""
+    @Published private(set) var advanceNotice: String?
     private var lastConsoleMessage: String?
     private var lastGuidanceLogged: RecognitionGuidance?
     private var lastModeLogged: RecognitionModeNotice?
@@ -148,7 +158,8 @@ final class CameraDemoModel: ObservableObject {
     init(configuration: DemoScanConfiguration) {
         self.configuration = configuration
         landmark = configuration.rule?.landmarkID ?? ""
-        meters = configuration.usesDatabase ? "0" : "5"
+        meters = configuration.rule.map { String($0.activateAfterMeters) }
+            ?? (configuration.usesDatabase ? "0" : "5")
         modeMessage = (configuration.visual == nil ? RecognitionModeNotice.ocrOnly : .appleVision).message
     }
 
@@ -308,6 +319,7 @@ final class CameraDemoModel: ObservableObject {
             }
             awaitingVerdict = update.awaitingVerdict
             if update.awaitingVerdict { insight = update.insight ?? "" }
+            advanceNotice = update.advanceNotice ?? advanceNotice
             if let result = update.result {
                 let matchPercent = Int((result.matchConfidence * 100).rounded())
                 matchStatus = "\(result.evidenceSource.rawValue) · \(result.status.rawValue) · match \(matchPercent)% · evidence score \(Int(result.score * 100))%"
@@ -382,12 +394,12 @@ private struct InsightVerdict: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(mode).font(.caption).foregroundStyle(.secondary)
-            Text(insight.isEmpty ? "No name" : insight)
+            Text(insight.isEmpty ? "Is this the product you selected?" : "Is this \(insight)?")
                 .font(.title3.weight(.semibold))
             HStack {
-                Button("Yes, that's it", action: confirm)
+                Button("Accept", action: confirm)
                     .buttonStyle(.borderedProminent)
-                Button("No, keep looking", action: negate)
+                Button("Deny", action: negate)
                     .buttonStyle(.bordered)
             }
         }

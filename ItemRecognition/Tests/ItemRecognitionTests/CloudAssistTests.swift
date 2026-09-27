@@ -112,7 +112,7 @@ final class CloudAssistTests: XCTestCase {
             extra: [.init(identifier: "table", score: 0.73), .init(identifier: "potato", score: 0.04)]))
         let session = try await RecognitionCoordinator(targetID: target,
             catalog: SingleItemCatalog(item: mvpItem(target, "onion")), visualClassifier: classifier,
-            visualPolicy: .appleVisionProduce)
+            visualPolicy: .appleVisionProduce, assessor: nil)
         let context = RecognitionContext(targetItemID: target, landmarkProgress: LandmarkProgressObservation(
             timestamp: 0, passedLandmarkID: "home-test", metersPastLandmark: 5, isReliable: true), externalPause: false)
         var results: [ItemRecognitionResult] = []
@@ -142,7 +142,7 @@ final class CloudAssistTests: XCTestCase {
                 extra: [.init(identifier: "table", score: 0.73), .init(identifier: "potato", score: 0.05)]))
             let session = try await RecognitionCoordinator(targetID: target,
                 catalog: SingleItemCatalog(item: mvpItem(target, label)), visualClassifier: classifier,
-                visualPolicy: .appleVisionProduce)
+                visualPolicy: .appleVisionProduce, assessor: nil)
             let context = RecognitionContext(targetItemID: target, landmarkProgress: LandmarkProgressObservation(
                 timestamp: 0, passedLandmarkID: "home-test", metersPastLandmark: 5, isReliable: true), externalPause: false)
             var latest: RecognitionUpdate?
@@ -286,7 +286,7 @@ final class CloudAssistTests: XCTestCase {
     func testTwoCloudAnswersAloneDoNotConfirmThroughCoordinator() async throws {
         let cloud = FakeCloud()
         let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.2), cloud: cloud)
-        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier)
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier, assessor: nil)
         var statuses: [ItemRecognitionResult.Status] = []
         var cloudFrames = 0
         for frame in 1...50 {
@@ -309,7 +309,7 @@ final class CloudAssistTests: XCTestCase {
     /// frames whose evidence came from Gemini, `.appleVision` on every other visual frame.
     func testModeNoticeNamesGeminiOnlyOnCloudFrames() async throws {
         let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.2), cloud: FakeCloud())
-        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier)
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier, assessor: nil)
         var notices: [RecognitionModeNotice] = []
         for frame in 1...35 {
             let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
@@ -332,7 +332,7 @@ final class CloudAssistTests: XCTestCase {
         let cloud = FakeCloud()
         let base = SequenceBase(scores: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.95, 0.95])
         let classifier = try ProduceCategoryClassifier(base: base, cloud: cloud)
-        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier)
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier, assessor: nil)
         var latest: RecognitionUpdate?
         var confirmedAt: Int?
         for frame in 1...40 {

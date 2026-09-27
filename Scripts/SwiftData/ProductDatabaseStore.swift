@@ -115,7 +115,8 @@ public actor ProductDatabaseStore {
     private func record(_ product: Product, profile: ProductRecognitionProfile) -> CatalogProductRecord {
         CatalogProductRecord(id: profile.recognitionID, tcin: product.tcin, title: product.title,
             brand: profile.brand, aliases: profile.aliases,
-            locations: Array(Set(product.locations.map { CatalogLocation(floor: $0.floor, block: $0.block, aisle: $0.aisle) })).sorted { $0.id < $1.id })
+            locations: Array(Set(product.locations.map { CatalogLocation(floor: $0.floor, block: $0.block, aisle: $0.aisle) })).sorted { $0.id < $1.id },
+            itemType: product.itemType)
     }
     private func matches(_ stored: StoreLocation, _ selected: CatalogLocation) -> Bool {
         stored.floor == selected.floor && stored.block == selected.block && stored.aisle == selected.aisle

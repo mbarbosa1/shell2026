@@ -18,6 +18,95 @@ final class CatalogMatchingTests: XCTestCase {
             candidates: [RecognizedTextCandidate(rawText: text, normalizedText: TextNormalizer().normalize(text),
                 confidence: confidence, boundingBox: .zero)], side: nil)
     }
+    private func packaged(_ title: String, type: String, id: UUID? = nil) -> CatalogItemSnapshot {
+        let itemID = id ?? targetID
+        return CatalogItemSnapshot(id: itemID, catalogKey: itemID.uuidString, displayName: title, brand: nil,
+                                   normalizedTerms: TextNormalizer().tokens(from: title), itemType: type)
+    }
+    private func lines(_ rows: [(String, CGRect)]) -> ProductTextObservation {
+        ProductTextObservation(timestamp: 1, targetItemID: targetID, boundingBox: .zero,
+            candidates: rows.map { text, box in
+                RecognizedTextCandidate(rawText: text, normalizedText: TextNormalizer().normalize(text),
+                    confidence: 1, boundingBox: box)
+            }, side: nil)
+    }
+    func testFruitAndVegetablesAreAppearanceItems() {
+        let fruit = CatalogItemSnapshot(id: targetID, catalogKey: "a", displayName: "Apple", brand: nil, normalizedTerms: [], itemType: "Fruit")
+        let vegetables = CatalogItemSnapshot(id: targetID, catalogKey: "b", displayName: "Onion", brand: nil, normalizedTerms: [], itemType: "Vegetables")
+        let crackers = CatalogItemSnapshot(id: targetID, catalogKey: "c", displayName: "Crackers", brand: nil, normalizedTerms: [], itemType: "Crackers")
+        XCTAssertTrue(fruit.recognizesByAppearance)
+        XCTAssertTrue(vegetables.recognizesByAppearance)
+        XCTAssertFalse(crackers.recognizesByAppearance)
+    }
+
+    func testShelfIndexLooksUpAnchorAndTitleInOneRead() {
+        let cereal = packaged("Cookie Crisp Cereal 18.3oz", type: "Cold Cereals")
+        let crackers = packaged("Cheez-It Original Crackers 12.4oz", type: "Crackers", id: neighborID)
+        let index = ShelfWordIndex(candidates: [cereal, crackers])
+        XCTAssertEqual(index.itemIDs(for: "cereal"), [targetID])
+        XCTAssertEqual(index.itemIDs(for: "cracker"), [neighborID])
+        XCTAssertTrue(index.itemIDs(matching: "cheez").contains(neighborID))
+        XCTAssertTrue(index.anchors(for: targetID).contains("cereal"))
+    }
+
+    func testColdCerealsAnchorsOnCereal() {
+        let words = ItemTypeAnchor.words(from: "Cold Cereals")
+        XCTAssertTrue(words.contains("cereal"))
+        XCTAssertTrue(words.contains("cereals"))
+        XCTAssertFalse(words.contains("cold"))
+        XCTAssertTrue(ItemTypeAnchor.words(from: "Fruit").isEmpty)
+        XCTAssertTrue(ItemTypeAnchor.words(from: "Vegetables").isEmpty)
+        XCTAssertTrue(ItemTypeAnchor.words(from: "Crackers").contains("cracker"))
+        let chips = ItemTypeAnchor.words(from: "Chips, Puffs and Pretzels")
+        XCTAssertTrue(chips.contains("chips"))
+        XCTAssertTrue(chips.contains("puffs"))
+        XCTAssertTrue(chips.contains("pretzels"))
+    }
+
+    func testPackagedMatchRequiresAnchorWord() {
+        let target = packaged("Cheez-It Original Crackers 12.4oz", type: "Crackers")
+        let matches = CatalogMatcher().match(observation("Cheez-It Original 12.4oz"), against: [target],
+                                            targetID: targetID)
+        XCTAssertEqual(matches.first?.score, 0)
+    }
+
+    func testNearbyCompanionCountsAndDistantSizeDoesNot() {
+        let target = packaged("Cheez-It Original Crackers 12.4oz", type: "Crackers")
+        let index = ShelfWordIndex(candidates: [target])
+        let observation = lines([
+            ("CRACKERS", CGRect(x: 0.20, y: 0.50, width: 0.30, height: 0.08)),
+            ("Cheez-It", CGRect(x: 0.20, y: 0.60, width: 0.25, height: 0.06)),
+            ("12.4oz", CGRect(x: 0.70, y: 0.05, width: 0.20, height: 0.05)),
+        ])
+        let matches = CatalogMatcher().match(observation, against: [target], targetID: targetID, index: index)
+        XCTAssertGreaterThan(matches.first?.score ?? 0, 0)
+        XCTAssertTrue(matches.first?.matchedTerms.contains("cheez-it") == true)
+        XCTAssertTrue(matches.first?.matchedTerms.contains("crackers") == true)
+        XCTAssertFalse(matches.first?.matchedTerms.contains("12.4oz") == true)
+    }
+
+    func testTwoDistantCrackerClustersDoNotConfirm() {
+        let cheez = packaged("Cheez-It Original Crackers 12.4oz", type: "Crackers")
+        let ritz = packaged("Ritz Original Crackers 13.7oz", type: "Crackers", id: neighborID)
+        let index = ShelfWordIndex(candidates: [cheez, ritz])
+        let observation = lines([
+            ("CRACKERS", CGRect(x: 0.15, y: 0.72, width: 0.30, height: 0.08)),
+            ("Cheez-It Original 12.4oz", CGRect(x: 0.15, y: 0.82, width: 0.40, height: 0.06)),
+            ("CRACKERS", CGRect(x: 0.15, y: 0.10, width: 0.30, height: 0.08)),
+            ("Ritz Original 13.7oz", CGRect(x: 0.15, y: 0.20, width: 0.40, height: 0.06)),
+        ])
+        let matches = CatalogMatcher().match(observation, against: [cheez, ritz], targetID: targetID, index: index)
+        XCTAssertTrue(matches.allSatisfy { $0.score == 0 })
+    }
+
+    func testMinuteDeadlineTellsTheUserToMoveOn() async throws {
+        let session = try await session()
+        let started = try await session.submit(context(), image: image(0))
+        XCTAssertNil(started.advanceNotice)
+        let expired = try await session.submit(context(), image: image(60))
+        XCTAssertEqual(expired.advanceNotice, ScanDeadline.expiredMessage)
+    }
+
     func testExactVariantWinsAndConflictingVariantIsRejected() {
         let matches = CatalogMatcher().match(observation("ACME OAT CEREAL HONEY 12 OZ"), against: candidates)
         XCTAssertEqual(matches.first?.itemID, targetID)
@@ -51,15 +140,13 @@ final class CatalogMatchingTests: XCTestCase {
         XCTAssertFalse(confirmation.observe(targetID: neighborID, timestamp: 13, accepted: true))
     }
 
-    func testCoordinatorConfirmsOnlyAfterThreeEligibleObservations() async throws {
+    func testCoordinatorAsksAfterOneClearFrame() async throws {
         let session = try await session()
-        var result: ItemRecognitionResult?
-        for index in 1...15 {
-            result = try await session.submit(context(), image: image(Double(index) / 10)).result ?? result
-            if index == 5 || index == 10 { XCTAssertEqual(result?.status, .candidate) }
-        }
-        XCTAssertEqual(result?.status, .confirmed)
-        XCTAssertEqual(result?.matchedItemID, targetID)
+        var update: RecognitionUpdate?
+        for index in 1...5 { update = try await session.submit(context(), image: image(Double(index) / 10)) }
+        XCTAssertEqual(update?.result?.status, .confirmed, "the first processed frame that clearly matches asks the shopper")
+        XCTAssertEqual(update?.result?.matchedItemID, targetID)
+        XCTAssertEqual(update?.awaitingVerdict, true)
     }
 
     func testCoordinatorPauseClearsConfirmationAndFreshCadenceIsRequired() async throws {
@@ -69,10 +156,11 @@ final class CatalogMatchingTests: XCTestCase {
         XCTAssertEqual(paused.state, .suspended)
         for index in 11...14 {
             let update = try await session.submit(context(), image: image(Double(index) / 10))
-            XCTAssertNil(update.result)
+            XCTAssertNil(update.result, "the pause dropped the pending question")
         }
         let fresh = try await session.submit(context(), image: image(1.5))
-        XCTAssertEqual(fresh.result?.status, .candidate)
+        XCTAssertEqual(fresh.result?.status, .confirmed)
+        XCTAssertEqual(fresh.result?.timestamp, 1.5, "asked again from a fresh frame, not the old one")
     }
 
     func testCoordinatorInactiveContextDoesNotRunOCRAndStopEndsSession() async throws {
@@ -88,7 +176,9 @@ final class CatalogMatchingTests: XCTestCase {
     }
 
     func testOCRUpdatesReportOCRModeAndCarryDetectorGuidance() async throws {
-        let session = try await session(detector: MatchingRegion(guidance: .moveRight))
+        // Three observations keep the frame a candidate, so its hint is not hidden by a question.
+        let session = try await session(detector: MatchingRegion(guidance: .moveRight),
+                                        policy: RecognitionPolicy(requiredObservations: 3))
         var processed: RecognitionUpdate?
         for index in 1...5 {
             let update = try await session.submit(context(), image: image(Double(index) / 10))
@@ -108,7 +198,7 @@ final class CatalogMatchingTests: XCTestCase {
             if update.result != nil { processed = update }
         }
         XCTAssertEqual(processed?.guidance, .moveCloser)
-        XCTAssertEqual(processed?.guidance?.message, "Move closer to the item")
+        XCTAssertEqual(processed?.guidance?.message, "Move forward")
         XCTAssertEqual(processed?.result?.status, .noMatch)
         XCTAssertNil(processed?.observation)
         XCTAssertEqual(processed?.modeNotice, .ocrOnly)
@@ -123,30 +213,41 @@ final class CatalogMatchingTests: XCTestCase {
         XCTAssertNil(update.guidance)
     }
 
-    func testThreeEmptyOCRFramesSwitchToVisionAndThenAskTheUser() async throws {
+    func testPackagedItemStaysOnOCR() async throws {
         let vision = FallbackVision()
         let session = try await session(detector: MatchingRegion(crop: nil, guidance: .moveCloser), ocrFallback: vision)
         var processed: [RecognitionUpdate] = []
-        for index in 1...30 {
+        for index in 1...15 {
             let update = try await session.submit(context(), image: image(Double(index) / 10))
             if update.result != nil { processed.append(update) }
         }
         XCTAssertEqual(processed[0].modeNotice, .ocrOnly)
         XCTAssertEqual(processed[0].guidance, .moveCloser)
-        XCTAssertEqual(processed[2].modeNotice, .ocrOnly, "the third empty frame is still OCR; it is the one that decides")
-        XCTAssertEqual(processed[3].modeNotice, .appleVision)
-        XCTAssertEqual(processed[3].result?.visualEvidence?.classifications.first?.identifier, "onion")
+        XCTAssertEqual(processed.last?.modeNotice, .ocrOnly)
         let calls = await vision.calls
-        XCTAssertGreaterThanOrEqual(calls, 1)
-        XCTAssertEqual(processed.last?.awaitingVerdict, true)
-        XCTAssertEqual(processed.last?.insight, "onion")
-        let frozen = try await session.submit(context(), image: image(4))
-        XCTAssertEqual(frozen.awaitingVerdict, true, "a settled insight does not keep scanning")
-        let frozenCalls = await vision.calls
-        XCTAssertEqual(frozenCalls, calls)
-        await session.rejectInsight()
-        let resumed = try await session.submit(context(), image: image(5))
-        XCTAssertFalse(resumed.awaitingVerdict)
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testFruitStartsOnAppleVisionAndAsksForTheSelectedProduct() async throws {
+        let vision = FallbackVision()
+        let fruit = CatalogItemSnapshot(id: targetID, catalogKey: "apple", displayName: "Gala Apple",
+            brand: nil, normalizedTerms: [], visual: VisualCatalogMetadata(modelID: "fallback.vision",
+                classIDs: ["onion"], allowsConfirmation: true), itemType: "Fruit")
+        let session = try await RecognitionCoordinator(targetID: targetID,
+            catalog: MatchingCatalog(targetID: targetID, candidates: [fruit]),
+            recognizer: MatchingRecognizer(), visualClassifier: vision, assessor: FixedAssessment())
+        var settled: RecognitionUpdate?
+        for index in 1...15 {
+            let update = try await session.submit(context(), image: image(Double(index) / 10))
+            if update.result != nil, !update.awaitingVerdict { XCTAssertEqual(update.guidance, .moveBack) }
+            if update.awaitingVerdict { settled = update }
+        }
+        let verdict = try XCTUnwrap(settled)
+        XCTAssertEqual(verdict.modeNotice, .appleVision)
+        XCTAssertEqual(verdict.insight, "Gala Apple")
+        XCTAssertNil(verdict.confirmedObservation)
+        let accepted = await session.acceptInsight()
+        XCTAssertEqual(accepted?.itemID, targetID)
     }
 
     func testConfirmedOCRWaitsForTheUser() async throws {
@@ -174,9 +275,10 @@ final class CatalogMatchingTests: XCTestCase {
 
     private func session(recognizer: MatchingRecognizer = MatchingRecognizer(),
                          detector: MatchingRegion = MatchingRegion(),
-                         ocrFallback: (any VisualClassifying)? = nil) async throws -> RecognitionCoordinator {
+                         ocrFallback: (any VisualClassifying)? = nil,
+                         policy: RecognitionPolicy = RecognitionPolicy()) async throws -> RecognitionCoordinator {
         try await RecognitionCoordinator(targetID: targetID, catalog: MatchingCatalog(targetID: targetID, candidates: candidates),
-            recognizer: recognizer, detector: detector, ocrFallback: ocrFallback)
+            recognizer: recognizer, detector: detector, policy: policy, ocrFallback: ocrFallback, assessor: nil)
     }
     private func context(meters: Double = 5, pause: Bool = false) -> RecognitionContext {
         RecognitionContext(targetItemID: targetID, landmarkProgress: LandmarkProgressObservation(timestamp: 0,
@@ -195,6 +297,11 @@ private struct MatchingCatalog: CatalogReading {
     func catalogCandidates(for targetItemID: UUID) async throws -> [CatalogItemSnapshot] { candidates }
     func activationRule(for targetItemID: UUID) async throws -> DetectionActivationRuleSnapshot? {
         DetectionActivationRuleSnapshot(targetItemID: targetID, landmarkID: "aisle", activateAfterMeters: 3, deactivateAfterMeters: 20)
+    }
+}
+private struct FixedAssessment: FrameAssessing {
+    func assess(_ image: RecognitionImage) async throws -> FrameAssessment {
+        FrameAssessment(objectRegion: CGRect(x: 8, y: 8, width: 32, height: 24), quality: .usable, guidance: .moveBack)
     }
 }
 private struct MatchingRegion: LabelRegionDetecting {

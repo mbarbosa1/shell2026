@@ -48,12 +48,19 @@ public struct ItemObservation: Sendable, Equatable {
 }
 
 public struct RecognitionPolicy: Sendable {
+    public let requireDiscriminatingTerms: Bool
     public let minimumScore: Float
     public let minimumMargin: Float
     public let requiredObservations: Int
     public let maximumGap: TimeInterval
-    public init(minimumScore: Float = 0.7, minimumMargin: Float = 0.15,
-                requiredObservations: Int = 3, maximumGap: TimeInterval = 2) {
+    /// Defaults ask the shopper after one clear frame: the target scores at least
+    /// 0.4 of its title words, leads every other aisle product by 0.15, and no
+    /// neighbor's distinguishing word was read. The shopper's answer is the final
+    /// check, so repeated frames only delayed the question (user decision).
+    public init(minimumScore: Float = 0.4, minimumMargin: Float = 0.15,
+                requiredObservations: Int = 1, maximumGap: TimeInterval = 2,
+                requireDiscriminatingTerms: Bool = false) {
+        self.requireDiscriminatingTerms = requireDiscriminatingTerms
         self.minimumScore = minimumScore.isFinite ? min(max(minimumScore, 0), 1) : 0.7
         self.minimumMargin = minimumMargin.isFinite ? min(max(minimumMargin, 0), 1) : 0.15
         self.requiredObservations = max(1, requiredObservations)

@@ -23,7 +23,7 @@ final class VisualRecognitionTests: XCTestCase {
     }
     private func session(classifier: FakeVisualClassifier, items: [CatalogItemSnapshot]? = nil) async throws -> RecognitionCoordinator {
         try await RecognitionCoordinator(targetID: target, catalog: VisualTestCatalog(items: items ?? [item(target)]),
-            recognizer: UnexpectedOCR(), detector: UnexpectedTextDetector(), visualClassifier: classifier)
+            recognizer: UnexpectedOCR(), detector: UnexpectedTextDetector(), visualClassifier: classifier, assessor: nil)
     }
     private func run(_ session: RecognitionCoordinator, from start: Int = 1, through end: Int = 15) async throws -> RecognitionUpdate? {
         var latest: RecognitionUpdate?
@@ -44,8 +44,11 @@ final class VisualRecognitionTests: XCTestCase {
         let third = try await run(session, from: 11)
         XCTAssertEqual(third?.result?.matchedItemID, target)
         XCTAssertEqual(third?.result?.status, .confirmed)
-        XCTAssertEqual(third?.confirmedObservation?.evidenceSource, .visual)
-        XCTAssertEqual(third?.confirmedObservation?.side, .left)
+        XCTAssertEqual(third?.awaitingVerdict, true)
+        XCTAssertNil(third?.confirmedObservation, "the match waits for Accept")
+        XCTAssertEqual(third?.suggestedObservation?.evidenceSource, .visual)
+        XCTAssertEqual(third?.suggestedObservation?.side, .left)
+        XCTAssertEqual(third?.insight, "Fresh Yellow Onion - each")
         XCTAssertTrue(third?.result?.normalizedObservedText.isEmpty == true)
         XCTAssertNil(third?.observation)
         let calls = await classifier.calls

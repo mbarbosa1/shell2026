@@ -6,8 +6,9 @@ enum RecognitionFrameEvidence: Sendable {
     /// OCR result (nil when no region was read) plus any user-facing direction
     /// from detection. Guidance survives a nil observation so "text too small"
     /// still reaches the app as "move closer".
-    case text(ProductTextObservation?, guidance: RecognitionGuidance?)
-    case visual(VisualObservation)
+    case text(ProductTextObservation?, detection: LabelRegionDetection, assessment: FrameAssessment?)
+    case visual(VisualObservation, assessment: FrameAssessment?)
+    case unsuitable(FrameAssessment)
 }
 
 enum RecognitionFrameOutcome: Sendable {
@@ -26,6 +27,7 @@ actor RecognitionFrameScheduler {
     private let recognizer: any TextRecognizing
     private let regionDetector: any LabelRegionDetecting
     private let normalizer: any TextNormalizing
+    private let assessor: (any FrameAssessing)?
     /// Nil on the OCR path. Set when the session gives up on text and adopts
     /// image recognition for the rest of this scan.
     private var visualClassifier: (any VisualClassifying)?
@@ -44,13 +46,15 @@ actor RecognitionFrameScheduler {
         normalizer: any TextNormalizing = TextNormalizer(),
         frameStride: Int = TextExtractionScheduler.defaultStride,
         regionDetector: any LabelRegionDetecting = VisionLabelRegionDetector(),
-        visualClassifier: (any VisualClassifying)? = nil
+        visualClassifier: (any VisualClassifying)? = nil,
+        assessor: (any FrameAssessing)? = nil
     ) {
         self.gate = gate
         self.recognizer = recognizer
         self.regionDetector = regionDetector
         self.normalizer = normalizer
         self.visualClassifier = visualClassifier
+        self.assessor = assessor
         self.frameStride = min(max(frameStride, Self.strideRange.lowerBound), Self.strideRange.upperBound)
     }
 
@@ -74,10 +78,11 @@ actor RecognitionFrameScheduler {
 
     /// Invalidate queued/in-flight results and restart cadence after a context
     /// change supplied separately from camera frames.
-    func invalidate() {
+    func invalidate() async {
         generation &+= 1
         framesWhileActive = 0
         discardPending()
+        await assessor?.reset()
     }
 
     /// Skips cadence frames explicitly; a completed frame may have no text.
@@ -196,21 +201,29 @@ actor RecognitionFrameScheduler {
 
     private func perform(_ frame: Frame) async throws -> RecognitionFrameOutcome {
         guard await isCurrent(frame) else { return .discarded }
+        let assessment = try await assessor?.assess(frame.image)
+        guard await isCurrent(frame), !Task.isCancelled else { return .discarded }
+        if let assessment, !assessment.isSuitable { return .processed(.unsuitable(assessment)) }
         if let visualClassifier {
-            let observation = try await visualClassifier.classify(in: frame.image, crop: frame.crop)
+            // Appearance classifies the whole crop, so it still needs one item in view.
+            if let assessment, assessment.objectBoxes.count > 1 {
+                return .processed(.unsuitable(FrameAssessment(objectRegion: nil, quality: .multipleObjects,
+                    continuityLost: true, objectBoxes: assessment.objectBoxes)))
+            }
+            let observation = try await visualClassifier.classify(in: frame.image, crop: frame.crop ?? assessment?.objectRegion)
             guard await isCurrent(frame) else { return .discarded }
-            return .processed(.visual(observation))
+            return .processed(.visual(observation, assessment: assessment))
         }
         let crop: CGRect
-        var guidance: RecognitionGuidance?
+        let detection: LabelRegionDetection
         if let supplied = frame.crop {
             crop = supplied
+            detection = LabelRegionDetection(crop: supplied, guidance: assessment?.guidance)
         } else {
-            let detection = try await regionDetector.detectRegion(in: frame.image)
-            guidance = detection.guidance
+            detection = try await regionDetector.detectRegion(in: frame.image, within: assessment?.objectRegion)
             guard let detected = detection.crop else {
                 guard await isCurrent(frame) else { return .discarded }
-                return .processed(.text(nil, guidance: guidance))
+                return .processed(.text(nil, detection: detection, assessment: assessment))
             }
             crop = detected
         }
@@ -247,7 +260,7 @@ actor RecognitionFrameScheduler {
             boundingBox: crop,
             candidates: candidates,
             side: rule?.side
-        ), guidance: guidance))
+        ), detection: detection, assessment: assessment))
     }
 
     private func isCurrent(_ frame: Frame) async -> Bool {
