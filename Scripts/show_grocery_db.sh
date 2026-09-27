@@ -106,7 +106,7 @@ echo
 echo "== ITEMS"
 query "
 select l.ZNUMBER as list, i.ZNAME as name, i.ZQUANTITY as qty, i.ZLABEL as label,
-       i.ZBRAND as brand, i.ZSIZE as size, i.ZAISLE as aisle, i.ZBLOCK as block,
+       i.ZBRAND as brand, i.ZSIZE as size, i.ZAISLE as aisle, i.ZBLOCK as block, i.ZPRICE as price, i.ZTCIN as tcin,
        case i.ZISCOLLECTED when 1 then 'yes' else 'no' end as in_cart,
        datetime(i.ZADDEDAT + 978307200, 'unixepoch', 'localtime') as added
 from ZGROCERYITEM i left join ZGROCERYLIST l on i.ZLIST = l.Z_PK
