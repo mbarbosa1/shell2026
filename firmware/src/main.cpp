@@ -9,8 +9,19 @@
 //   - 3 raw bytes: pan, tilt1, tilt2   e.g. hex 5A5A5A = 90,90,90
 //   - text:        "pan,tilt1,tilt2"   e.g. 60,90,120
 //
-// Distance sensor (optional): if connected, the distance in cm is sent to the
-// phone every 100 ms on the DISTANCE characteristic (2 bytes, 0 = no echo).
+// Servo test without the phone: type the same text into the PlatformIO Serial
+// Monitor and press Enter, e.g. 90,90,90. Type "d" to turn the distance printout
+// on or off. tilt1 and tilt2 hold the two sides of the phone clamp, so always move
+// them together; moving only one twists the clamp.
+//
+// Distance sensor: an ultrasonic sensor faces forward on the cart. The distance in
+// cm is sent to the phone every 100 ms on the DISTANCE characteristic (2 bytes,
+// little-endian, 0 = no echo). The phone decides when that counts as an obstacle
+// and tells the Apple Watch to vibrate.
+//
+// Wiring: TRIG -> GPIO 7, ECHO -> GPIO 15. The classic HC-SR04 runs on 5 V and its
+// ECHO pin outputs 5 V, which can damage the ESP32-S3 (3.3 V pins). Use a 3.3 V
+// version (HC-SR04P / RCWL-1601) or put a voltage divider on ECHO (e.g. 1k + 2k).
 
 #include <Arduino.h>
 #include <ESP32Servo.h>
@@ -23,6 +34,12 @@
 const int SERVO_PINS[3] = {4, 5, 6};  // pan, tilt1, tilt2
 const int TRIG_PIN = 7;
 const int ECHO_PIN = 15;
+
+// ---------- Distance sensor ----------
+// Readings closer than this are ignored (not sent to the phone): at that range the
+// sensor is usually seeing the cart itself, the user's hand, or a bad echo. 0 (no
+// echo, nothing within ~4 m) is still sent, and means the path is clear.
+const uint16_t MIN_VALID_CM = 30;
 
 // ---------- Safety limits ----------
 // Keep the arm from swinging into its own frame. Adjust once the arm is built.
@@ -91,7 +108,9 @@ class CommandCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-/*uint16_t readDistanceCm() {
+// Sends one ultrasonic pulse and times the echo. Returns cm, or 0 if nothing
+// answered within ~4 m (or the sensor isn't plugged in).
+uint16_t readDistanceCm() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -99,8 +118,8 @@ class CommandCallbacks : public BLECharacteristicCallbacks {
   digitalWrite(TRIG_PIN, LOW);
   long duration = pulseIn(ECHO_PIN, HIGH, 25000);  // ~4 m max
   if (duration == 0) return 0;                     // no echo / not connected
-  return (uint16_t)(duration * 0.0343 / 2.0);
-} */
+  return (uint16_t)(duration * 0.0343 / 2.0);  // sound: 0.0343 cm/us, there and back
+}
 
 void setup() {
   Serial.begin(115200);
@@ -114,8 +133,8 @@ void setup() {
     servos[i].write(90);
   }
 
-  // pinMode(TRIG_PIN, OUTPUT);
- //  pinMode(ECHO_PIN, INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
 
   BLEDevice::init("CartArm");
   BLEServer* server = BLEDevice::createServer();
@@ -128,10 +147,11 @@ void setup() {
       BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
   commandChar->setCallbacks(new CommandCallbacks());
 
-  /*distanceChar = service->createCharacteristic(
+  // NOTIFY lets the phone subscribe and get each new reading pushed to it.
+  distanceChar = service->createCharacteristic(
       DISTANCE_UUID,
       BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  distanceChar->addDescriptor(new BLE2902()); */
+  distanceChar->addDescriptor(new BLE2902());
 
   service->start();
   BLEAdvertising* adv = BLEDevice::getAdvertising();
@@ -143,7 +163,30 @@ void setup() {
 }
 
 unsigned long lastServoTick = 0;
-// unsigned long lastDistanceTick = 0;
+unsigned long lastDistanceTick = 0;
+bool printDistance = false;  // toggled by typing "d" in the Serial Monitor
+
+// Reads one line typed in the Serial Monitor:
+//   "pan,tilt1,tilt2"  moves the servos (same limits and smoothing as Bluetooth)
+//   "d"                turns the distance printout on or off
+void readSerialCommand() {
+  if (!Serial.available()) return;
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+
+  if (line == "d") {
+    printDistance = !printDistance;
+    Serial.println(printDistance ? "Distance printout on" : "Distance printout off");
+    return;
+  }
+  int a[3];
+  if (sscanf(line.c_str(), "%d,%d,%d", &a[0], &a[1], &a[2]) != 3) {
+    Serial.println("Type pan,tilt1,tilt2 (e.g. 90,90,90) or d");
+    return;
+  }
+  for (int i = 0; i < 3; i++) targetAngle[i] = clampAngle(i, a[i]);
+  Serial.printf("Target: %d, %d, %d\n", targetAngle[0], targetAngle[1], targetAngle[2]);
+}
 
 void loop() {
   unsigned long now = millis();
@@ -160,11 +203,24 @@ void loop() {
     }
   }
 
-  // Send distance to the phone every 100 ms
-  /*if (phoneConnected && now - lastDistanceTick >= 100) {
+  // Measure the distance every 100 ms. readDistanceCm() can block for up to 25 ms
+  // waiting for an echo, which only delays the next servo step slightly.
+  if (now - lastDistanceTick >= 100) {
     lastDistanceTick = now;
     uint16_t cm = readDistanceCm();
-    distanceChar->setValue((uint8_t*)&cm, 2);
-    distanceChar->notify();
-  }*/
+    bool tooClose = cm > 0 && cm < MIN_VALID_CM;
+
+    if (printDistance) {
+      if (tooClose) Serial.printf("Distance: %u cm (ignored, under %u cm)\n", cm, MIN_VALID_CM);
+      else Serial.printf("Distance: %u cm\n", cm);
+    }
+    // The phone keeps its last state when a reading is skipped, so an ignored
+    // reading neither starts nor stops the obstacle alarm.
+    if (phoneConnected && !tooClose) {
+      distanceChar->setValue((uint8_t*)&cm, 2);
+      distanceChar->notify();
+    }
+  }
+
+  readSerialCommand();
 }
