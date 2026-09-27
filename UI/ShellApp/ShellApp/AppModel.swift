@@ -209,7 +209,15 @@ final class AppModel {
         onboardingPage = 0
         hasOnboarded = false
     }
-    
+
+     /// Checks the "Replay onboarding" switch in the iPhone Settings app.
+    func checkReplayOnboardingSetting() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "replayOnboarding") else { return }
+        defaults.set(false, forKey: "replayOnboarding") // turns the switch back off
+        restartOnboarding()
+    }
+
     // MARK: Text for the agent
 
     /// The current list as text: "List 3 (open, started September 26): Bananas (3 bananas · Fresh produce), …".

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+      <key>PreferenceSpecifiers</key>
+      <array>
+              <dict>
+                      <key>Type</key>
+                      <string>PSGroupSpecifier</string>
+                      <key>Title</key>
+                      <string>Onboarding</string>
+                      <key>FooterText</key>
+                      <string>Turn on, then go back to the app to see the welcome guide again.</string>
+              </dict>
+              <dict>
+                      <key>Type</key>
+                      <string>PSToggleSwitchSpecifier</string>
+                      <key>Title</key>
+                      <string>Replay onboarding</string>
+                      <key>Key</key>
+                      <string>replayOnboarding</string>
+                      <key>DefaultValue</key>
+                      <false/>
+              </dict>
+      </array>
+</dict>
+</plist>
