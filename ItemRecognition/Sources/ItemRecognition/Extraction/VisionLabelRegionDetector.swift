@@ -100,7 +100,7 @@ public struct VisionLabelRegionDetector: LabelRegionDetecting {
                        orientedImageHeight: CGFloat) -> Decision {
         guard let package = packageRegion(packages, minimumConfidence: minimumPackageConfidence) else {
             guard let union = paddedRegion(boxes: textBoxes, padding: padding) else {
-                return Decision(region: nil, guidance: nil, readiness: .unsuitable)
+                return Decision(region: nil, guidance: .moveCloser, readiness: .unsuitable)
             }
             return Decision(region: union, guidance: horizontalGuidance(for: union))
         }
@@ -111,7 +111,8 @@ public struct VisionLabelRegionDetector: LabelRegionDetecting {
         guard isLegible(textBoxes: inside, orientedImageHeight: orientedImageHeight,
                         minimumTextHeight: minimumTextHeight) else {
             let far = package.width * package.height < smallPackageArea
-            return Decision(region: nil, guidance: far ? .moveCloser : .moveBack, readiness: .textTooSmall)
+            // A near package with tiny text is fine print: stepping back would only shrink it.
+            return Decision(region: nil, guidance: far ? .moveCloser : .keepWalking, readiness: .textTooSmall)
         }
         return Decision(region: paddedRegion(boxes: inside, padding: padding, within: package),
                         guidance: horizontalGuidance(for: package))

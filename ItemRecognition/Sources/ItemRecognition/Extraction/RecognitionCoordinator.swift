@@ -17,6 +17,10 @@ public struct RecognitionUpdate: Sendable {
     /// Original-buffer pixels of the object whose text matched the target when
     /// several objects were in view. Nil with one object or before a match.
     public let focusedObject: CGRect?
+    /// OCR frames only: what was read and how close it came, in plain language,
+    /// e.g. `Read “Reduced Fat Milk”. Partly matches (35%).` Nil when nothing was
+    /// read or while the shopper is being asked.
+    public let progress: String?
     public let textReadiness: LabelRegionDetection.Readiness?
     public let didRunOCR: Bool
     public let awaitingVerdict: Bool
@@ -39,13 +43,14 @@ public struct RecognitionUpdate: Sendable {
                 awaitingVerdict: Bool = false, insight: String? = nil, activeMode: RecognitionModeNotice? = nil,
                 pathTransition: RecognitionPathTransition? = nil, assessment: FrameAssessment? = nil,
                 textReadiness: LabelRegionDetection.Readiness? = nil, didRunOCR: Bool = false,
-                advanceNotice: String? = nil, focusedObject: CGRect? = nil) {
+                advanceNotice: String? = nil, focusedObject: CGRect? = nil, progress: String? = nil) {
         self.gate = gate; self.observation = observation; self.result = result; self.side = side
         self.guidance = awaitingVerdict ? nil : guidance; self.modeNotice = modeNotice
         self.awaitingVerdict = awaitingVerdict; self.insight = insight
         self.activeMode = activeMode ?? modeNotice; self.pathTransition = pathTransition
         self.assessment = assessment; self.textReadiness = textReadiness; self.didRunOCR = didRunOCR
         self.advanceNotice = advanceNotice; self.focusedObject = focusedObject
+        self.progress = awaitingVerdict ? nil : progress
     }
 }
 
@@ -244,7 +249,8 @@ public actor RecognitionCoordinator {
             let text = read?.candidates.map(\.rawText).joined(separator: " ")
             let value = update(decision, observation: read, result: result, guidance: guidance,
                 source: .ocrOnly, assessment: assessment, readiness: detection.readiness, didRunOCR: observation != nil,
-                awaitingVerdict: confirmed, insight: confirmed ? targetName : text, focusedObject: focusedObject)
+                awaitingVerdict: confirmed, insight: confirmed ? targetName : text, focusedObject: focusedObject,
+                progress: Self.progress(read: text, score: score, accepted: accepted, confidence: confidence))
             if confirmed { settled = value }
             return value
         }
@@ -255,18 +261,34 @@ public actor RecognitionCoordinator {
                         guidance: RecognitionGuidance? = nil, source: RecognitionModeNotice? = nil,
                         assessment: FrameAssessment? = nil, readiness: LabelRegionDetection.Readiness? = nil,
                         didRunOCR: Bool = false, awaitingVerdict: Bool = false, insight: String? = nil,
-                        advanceNotice: String? = nil, focusedObject: CGRect? = nil) -> RecognitionUpdate {
+                        advanceNotice: String? = nil, focusedObject: CGRect? = nil,
+                        progress: String? = nil) -> RecognitionUpdate {
         RecognitionUpdate(gate: gate, observation: observation, result: result, side: side,
             guidance: guidance, modeNotice: source ?? activeMode, awaitingVerdict: awaitingVerdict, insight: insight,
             activeMode: activeMode, pathTransition: transition, assessment: assessment,
-            textReadiness: readiness, didRunOCR: didRunOCR, advanceNotice: advanceNotice, focusedObject: focusedObject)
+            textReadiness: readiness, didRunOCR: didRunOCR, advanceNotice: advanceNotice, focusedObject: focusedObject,
+            progress: progress)
     }
+    /// Longest read-back quoted in a progress line, so a spoken answer stays short.
+    static let progressQuoteLength = 40
+
+    /// What OCR read and how close it came to the target. `confidence` is the
+    /// match confidence shown elsewhere, so the percentage agrees with the screen.
+    static func progress(read: String?, score: Float, accepted: Bool, confidence: Float) -> String? {
+        guard let read = read?.trimmingCharacters(in: .whitespacesAndNewlines), !read.isEmpty else { return nil }
+        let quoted = read.count > progressQuoteLength ? String(read.prefix(progressQuoteLength - 1)) + "…" : read
+        let percent = Int((confidence * 100).rounded())
+        if accepted { return "Read “\(quoted)”. Matches (\(percent)%). Hold still." }
+        if score > 0 { return "Read “\(quoted)”. Partly matches (\(percent)%)." }
+        return "Read “\(quoted)”. Not the item yet."
+    }
+
     private func notingDeadline(_ update: RecognitionUpdate) -> RecognitionUpdate {
         RecognitionUpdate(gate: update.gate, observation: update.observation, result: update.result, side: update.side,
             guidance: update.guidance, modeNotice: update.modeNotice, awaitingVerdict: update.awaitingVerdict,
             insight: update.insight, activeMode: update.activeMode, pathTransition: update.pathTransition,
             assessment: update.assessment, textReadiness: update.textReadiness, didRunOCR: update.didRunOCR,
-            advanceNotice: ScanDeadline.expiredMessage, focusedObject: update.focusedObject)
+            advanceNotice: ScanDeadline.expiredMessage, focusedObject: update.focusedObject, progress: update.progress)
     }
     private func emptyResult(_ image: RecognitionImage, status: ItemRecognitionResult.Status = .noMatch) -> ItemRecognitionResult {
         ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID, matchedItemID: nil,

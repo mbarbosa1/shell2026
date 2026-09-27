@@ -22,7 +22,7 @@ public struct FrameAssessment: Sendable, Equatable {
         case .notLocated: return "Point the camera at one item"
         case .multipleObjects: return "Frame one item at a time"
         case .moving, .focusing: return "Hold the phone steady"
-        case .tooSmall: return "Move forward"
+        case .tooSmall: return "Move closer to the item"
         case .clipped: return "Move back"
         }
     }

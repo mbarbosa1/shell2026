@@ -12,8 +12,8 @@ public struct CatalogMatch: Sendable, Equatable {
 /// evidence coverage, not a calibrated probability. No persistence or product
 /// names are owned here; all identity evidence comes from catalog snapshots.
 ///
-/// Packaged items with an `itemType` only score words sitting next to that
-/// type's printed anchor. Snapshots with no type keep a bag-of-lines match.
+/// Packaged items whose name contains their `itemType` word only score words
+/// sitting next to that printed anchor. Other snapshots keep a bag-of-lines match.
 public struct CatalogMatcher: Sendable {
     private let normalizer = TextNormalizer()
     static let generic: Set<String> = ["a", "an", "the", "and", "of", "with", "for", "new", "original", "family", "pack", "size", "-"]
@@ -26,7 +26,10 @@ public struct CatalogMatcher: Sendable {
                       index: ShelfWordIndex? = nil) -> [CatalogMatch] {
         let target = targetID.flatMap { id in candidates.first { $0.id == id } } ?? candidates.first { $0.id == observation.targetItemID }
         let anchors = target.map { index?.anchors(for: $0.id) ?? ItemTypeAnchor.words(from: $0.itemType) } ?? []
-        if let target, target.itemType != nil, !target.recognizesByAppearance {
+        // The type word is only required when the product's own name uses it: oatmeal
+        // is typed "Porridges" but never prints that word, so it matches on its name.
+        if let target, target.itemType != nil, !target.recognizesByAppearance,
+           !anchors.isDisjoint(with: Self.words(target.normalizedTerms)) {
             return matchNearAnchor(observation, anchors: anchors, against: candidates, index: index,
                                    requireDiscriminatingTerms: requireDiscriminatingTerms)
         }
@@ -117,7 +120,9 @@ public struct CatalogMatcher: Sendable {
                 }
             }
             let weighted = matched.reduce(Float(0)) { $0 + (confidence[$1] ?? 0) }
-            let score = expected.isEmpty || matched.count < 2 || !conflicts.isEmpty ? 0 : weighted / Float(expected.count)
+            // Two matched words, unless the whole name is one word ("Milk" on a grocery list).
+            let needed = min(2, expected.count)
+            let score = expected.isEmpty || matched.count < needed || !conflicts.isEmpty ? 0 : weighted / Float(expected.count)
             return CatalogMatch(itemID: candidate.id, score: score, matchedTerms: matched, conflicts: conflicts)
         }.sorted { $0.score == $1.score ? $0.itemID.uuidString < $1.itemID.uuidString : $0.score > $1.score }
     }

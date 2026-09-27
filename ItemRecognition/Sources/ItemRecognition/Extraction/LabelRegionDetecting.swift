@@ -13,7 +13,8 @@ public enum RecognitionGuidance: String, Sendable, Equatable, Codable {
 
     public var message: String {
         switch self {
-        case .moveCloser, .keepWalking: return "Move forward"
+        case .moveCloser: return "Move closer to the item"
+        case .keepWalking: return "Keep walking toward the item"
         case .moveLeft: return "Move more to the left"
         case .moveRight: return "Move more to the right"
         case .moveBack: return "Move back"

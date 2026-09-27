@@ -198,7 +198,7 @@ final class CatalogMatchingTests: XCTestCase {
             if update.result != nil { processed = update }
         }
         XCTAssertEqual(processed?.guidance, .moveCloser)
-        XCTAssertEqual(processed?.guidance?.message, "Move forward")
+        XCTAssertEqual(processed?.guidance?.message, "Move closer to the item")
         XCTAssertEqual(processed?.result?.status, .noMatch)
         XCTAssertNil(processed?.observation)
         XCTAssertEqual(processed?.modeNotice, .ocrOnly)

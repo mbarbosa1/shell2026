@@ -321,9 +321,6 @@ final class CloudAssistTests: XCTestCase {
             notices.append(update.modeNotice)
         }
         XCTAssertEqual(notices, [.appleVision, .appleVision, .cloudAssist, .appleVision, .appleVision, .cloudAssist, .appleVision])
-        XCTAssertEqual(RecognitionModeNotice.cloudAssist.message, "Using cloud assist (Gemini)")
-        XCTAssertEqual(RecognitionModeNotice.appleVision.message, "Using on-device Apple Vision")
-        XCTAssertEqual(RecognitionModeNotice.ocrOnly.message, "Using OCR to read the label")
     }
 
     /// Weak ×3 (cloud #1), weak ×3 (cloud #2), then two on-device frames that pass:

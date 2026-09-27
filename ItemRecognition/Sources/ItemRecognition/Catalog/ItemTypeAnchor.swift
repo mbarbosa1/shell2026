@@ -16,14 +16,24 @@ public enum ItemTypeAnchor: Sendable {
         var result = Set<String>()
         for token in normalizer.tokens(from: itemType) where !token.contains(" ") && !shelf.contains(token) {
             result.insert(token)
-            if let singular = singular(of: token) { result.insert(singular) }
+            result.formUnion(singulars(of: token))
         }
         return result
     }
 
-    /// Light English plural: `cereals` → `cereal`. Leaves `ss` endings alone.
-    public static func singular(of word: String) -> String? {
-        guard word.count > 3, word.hasSuffix("s"), !word.hasSuffix("ss") else { return nil }
-        return String(word.dropLast())
+    /// Light English plural, as every plausible singular. Dropping the `s` is kept
+    /// (`cookies` → `cookie`, `sausages` → `sausage`); `-ies` also gives `-y`
+    /// (`pastries` → `pastry`) and `-xes`/`-ches`/`-shes`/`-sses`/`-zes` also drop
+    /// `es` (`mixes` → `mix`). A wrong extra form never appears on a package, so it
+    /// cannot match. Leaves `ss` endings alone.
+    public static func singulars(of word: String) -> [String] {
+        guard word.count > 3, word.hasSuffix("s"), !word.hasSuffix("ss") else { return [] }
+        var forms = [String(word.dropLast())]
+        if word.hasSuffix("ies") {
+            forms.append(String(word.dropLast(3)) + "y")
+        } else if ["xes", "ches", "shes", "sses", "zes"].contains(where: word.hasSuffix) {
+            forms.append(String(word.dropLast(2)))
+        }
+        return forms
     }
 }

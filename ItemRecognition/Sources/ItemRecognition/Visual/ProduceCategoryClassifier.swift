@@ -16,6 +16,30 @@ public struct ProduceTaxonomy: Decodable, Sendable {
         return try JSONDecoder().decode(Self.self, from: Data(contentsOf: url))
     }
 
+    /// Words that describe loose produce without making it a packaged product.
+    static let produceDescriptors: Set<String> = [
+        "fresh", "organic", "red", "yellow", "white", "sweet", "green", "large", "small", "medium",
+        "baby", "mini", "ripe", "whole", "loose", "bunch", "bag", "each", "seedless",
+        "gala", "fuji", "honeycrisp", "granny", "smith", "navel", "russet", "roma",
+    ]
+
+    /// The produce class a grocery-list name refers to: "Bananas" → `banana`,
+    /// "Red onions" → `onion`. Nil unless every other word only describes the
+    /// produce, so "Apple juice", "Onion powder", and "Potato chips" stay on text.
+    public func classID(forItemName name: String) -> String? {
+        let aliases = Dictionary(classes.flatMap { key, values in values.map { ($0, key) } }, uniquingKeysWith: { a, _ in a })
+        var found: String?
+        for word in TextNormalizer().tokens(from: name) where !word.contains(" ") {
+            if let match = ([word] + ItemTypeAnchor.singulars(of: word)).lazy.compactMap({ aliases[$0] }).first {
+                guard found == nil || found == match else { return nil }
+                found = match
+            } else if !Self.produceDescriptors.contains(word), !word.allSatisfy(\.isNumber) {
+                return nil
+            }
+        }
+        return found
+    }
+
     public func normalize(_ predictions: [VisualClassification]) -> [VisualClassification] {
         normalizeWithBackground(predictions).classifications
     }
