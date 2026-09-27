@@ -167,6 +167,38 @@ final class AppModel {
         return finished
     }
 
+    // MARK: Matching to the product catalog
+
+    /// The catalog only changes at launch, so it's fetched once.
+    @ObservationIgnored private var cachedProducts: [Product]?
+    private var catalogProducts: [Product] {
+        if let cachedProducts { return cachedProducts }
+        let products = (try? context.fetch(FetchDescriptor<Product>())) ?? []
+        cachedProducts = products
+        return products
+    }
+
+    /// Links the item to the product we think the user means (see `ProductMatcher`) and copies its
+    /// tcin, price and location onto it. Returns false when the store doesn't carry it.
+    @discardableResult
+    func matchToCatalog(_ item: GroceryItem) -> Bool {
+        guard let product = ProductMatcher.bestProduct(
+            name: item.name, label: item.label, brand: item.brand, in: catalogProducts
+        ) else { return false }
+        item.fill(from: product)
+        save()
+        return true
+    }
+
+    /// Matches every item on the open list that isn't linked yet. Returns the ones the store doesn't carry.
+    func matchUnlinkedItems() -> [GroceryItem] {
+        var notFound: [GroceryItem] = []
+        for item in items where item.tcin == nil {
+            if !matchToCatalog(item) { notFound.append(item) }
+        }
+        return notFound
+    }
+
     func list(number: Int) -> GroceryList? {
         let descriptor = FetchDescriptor<GroceryList>(predicate: #Predicate { $0.number == number })
         return try? context.fetch(descriptor).first
