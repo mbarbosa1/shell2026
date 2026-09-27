@@ -23,6 +23,18 @@ final class AppModel {
     var cart: [GroceryItem] {
         items.filter(\.isCollected).sorted { ($0.collectedAt ?? .distantPast) < ($1.collectedAt ?? .distantPast) }
     }
+    /// Items still to pick up, by block then aisle so they roughly follow the store.
+    /// Items with no location (not in the catalog) come last.
+    var itemsToGet: [GroceryItem] {
+        items.filter { !$0.isCollected }.sorted { a, b in
+            switch (a.block, b.block) {
+            case (nil, nil): return false
+            case (nil, _): return false
+            case (_, nil): return true
+            case let (blockA?, blockB?): return (blockA, a.aisle ?? 0) < (blockB, b.aisle ?? 0)
+            }
+        }
+    }
     /// The newest cart item, highlighted as "Just added".
     var justAddedCartID: UUID? { cart.last?.id }
 
@@ -49,6 +61,7 @@ final class AppModel {
 
     init(container: ModelContainer) {
         self.container = container
+        ProductImporter.importIfChanged(into: container.mainContext)
         currentList = Self.openList(in: container.mainContext)
         highlightedItemID = currentList.sortedItems.last?.id
         refresh()
@@ -71,7 +84,12 @@ final class AppModel {
                 name: usual.name, brand: usual.brand, label: usual.label, size: usual.size,
                 aisle: usual.aisle, block: usual.block
             )
+            // Keep the product link, so the usual stays matched to the same catalog product.
+            item.tcin = usual.tcin
+            item.price = usual.price
+            item.floor = usual.floor
             insert(item, source: source)
+            if item.tcin == nil { matchToCatalog(item) }
             added.append(item)
         }
         save()
@@ -80,7 +98,7 @@ final class AppModel {
         confirmation = added.count == 1 ? "\(last.name) added to your list" : "\(added.count) usuals added to your list"
     }
 
-    // MARK: Voice agent
+    // SAVVY: Voice agent
 
     func setListening(_ isListening: Bool) async {
         // VoiceOver already reads the screen aloud. The agent talking too would make both unusable.
@@ -100,6 +118,7 @@ final class AppModel {
     //along with adding items to the database we need to update status
     func addItem(_ item: GroceryItem, source: ListEvent.Source = .app) {
         insert(item, source: source)
+        matchToCatalog(item)
         save()
         highlightedItemID = item.id
         confirmation = "\(item.name) added to your list"
@@ -139,12 +158,16 @@ final class AppModel {
     ) -> Bool {
         guard let item = item(named: name) else { return false }
         if quantity != nil || brand != nil || label != nil || size != nil || aisle != nil || block != nil {
+            if brand != nil || label != nil || size != nil {
+                unlink(item)
+            }
             if let quantity { item.quantity = quantity }
             if let brand { item.brand = brand }
             if let label { item.label = label }
             if let size { item.size = size }
             if let aisle { item.aisle = aisle }
             if let block { item.block = block.uppercased() }
+            if item.tcin == nil { matchToCatalog(item) }
             log(.updated, item.name, source: source)
             save()
         }
@@ -171,6 +194,69 @@ final class AppModel {
         save()
         confirmation = "List \(finished.number) saved to History"
         return finished
+    }
+
+    // MARK: Matching to the product catalog
+
+    /// The catalog only changes at launch, so it's fetched once.
+    @ObservationIgnored private var cachedProducts: [Product]?
+    private var catalogProducts: [Product] {
+        if let cachedProducts { return cachedProducts }
+        let products = (try? context.fetch(FetchDescriptor<Product>())) ?? []
+        cachedProducts = products
+        return products
+    }
+
+    /// Links the item to the product we think the user means (see `ProductMatcher`) and copies its
+    /// tcin, price and location onto it. Returns false when the store doesn't carry it.
+    @discardableResult
+    func matchToCatalog(_ item: GroceryItem) -> Bool {
+        guard let product = ProductMatcher.bestProduct(
+            name: item.name, label: item.label, brand: item.brand, in: catalogProducts
+        ) else { return false }
+        item.fill(from: product)
+        save()
+        return true
+    }
+
+    /// The catalog product an item is linked to.
+    func product(for item: GroceryItem) -> Product? {
+        guard let tcin = item.tcin else { return nil }
+        return catalogProducts.first { $0.tcin == tcin }
+    }
+
+    /// Links anything not matched yet, then opens the camera. Returns the items the store doesn't carry.
+    /// Called by the Start shopping button and when Mira opens the camera.
+    @discardableResult
+    func startShopping() -> [GroceryItem] {
+        let notFound = matchUnlinkedItems()
+        isCameraOpen = true
+        return notFound
+    }
+
+    /// Clears what the item got from its old product, so it can be matched again. Values the
+    /// user set themselves (a different brand or aisle than the product's) are kept.
+    private func unlink(_ item: GroceryItem) {
+        if let old = product(for: item) {
+            if item.brand == old.brand { item.brand = nil }
+            if item.size == old.size { item.size = nil }
+            if let spot = old.primaryLocation, item.aisle == spot.aisle, item.block == spot.block {
+                item.aisle = nil
+                item.block = nil
+                item.floor = nil
+            }
+        }
+        item.tcin = nil
+        item.price = nil
+    }
+
+    /// Matches every item on the open list that isn't linked yet. Returns the ones the store doesn't carry.
+    func matchUnlinkedItems() -> [GroceryItem] {
+        var notFound: [GroceryItem] = []
+        for item in items where item.tcin == nil {
+            if !matchToCatalog(item) { notFound.append(item) }
+        }
+        return notFound
     }
 
     func list(number: Int) -> GroceryList? {
@@ -272,7 +358,8 @@ final class AppModel {
             let header = "🗄️ List \(list.number) (\(list.isOpen ? "open" : "finished"), \(list.history.count) history events)"
             return ([header] + (items.isEmpty ? ["   (no items)"] : items)).joined(separator: "\n")
         }
-        return rows.joined(separator: "\n")
+        let products = (try? context.fetchCount(FetchDescriptor<Product>())) ?? 0
+        return (rows + ["Product catalog: \(products) products"]).joined(separator: "\n")
     }
     #endif
     //as soon as you finish the user session it doesnt import into the database
@@ -335,16 +422,17 @@ final class AppModel {
     }
 
     /// Groups items by name and brand and ranks them by how many lists they've been on,
-    /// then by how recently they were added. Uses the newest copy's label and size, and the
-    /// newest known location, so adding an item without one doesn't forget where it was.
+    /// then by how recently they were added. Uses the newest copy's label and size, the newest
+    /// known location, and the newest product link, so adding an item without one doesn't forget them.
     private static func rank(_ items: [GroceryItem]) -> [CommonItem] {
-        var groups: [String: (newest: GroceryItem, located: GroceryItem?, lists: Set<Int>)] = [:]
+        var groups: [String: (newest: GroceryItem, located: GroceryItem?, linked: GroceryItem?, lists: Set<Int>)] = [:]
         for item in items {
             guard let number = item.list?.number else { continue }
             let key = CommonItem.key(name: item.name, brand: item.brand)
-            var group = groups[key] ?? (item, nil, [])
+            var group = groups[key] ?? (item, nil, nil, [])
             if item.addedAt > group.newest.addedAt { group.newest = item }
             if item.location != nil, item.addedAt > (group.located?.addedAt ?? .distantPast) { group.located = item }
+            if item.tcin != nil, item.addedAt > (group.linked?.addedAt ?? .distantPast) { group.linked = item }
             group.lists.insert(number)
             groups[key] = group
         }
@@ -353,7 +441,8 @@ final class AppModel {
                 CommonItem(
                     id: key, name: group.newest.name, brand: group.newest.brand,
                     label: group.newest.label, size: group.newest.size,
-                    aisle: group.located?.aisle, block: group.located?.block,
+                    aisle: group.located?.aisle, block: group.located?.block, floor: group.located?.floor,
+                    tcin: group.linked?.tcin, price: group.linked?.price,
                     timesListed: group.lists.count, lastAdded: group.newest.addedAt
                 )
             }

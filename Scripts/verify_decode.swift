@@ -1,7 +1,7 @@
 // Checks that products.json decodes into the Swift DTOs. Needs only Foundation,
 // so it runs with Command Line Tools (verify_import.swift needs full Xcode for SwiftData macros).
 //   swiftc -parse-as-library SwiftData/ProductDTO.swift verify_decode.swift -o .build/verify_decode
-
+// backup for when you only have Command Line Tools installed. It just checks that the JSON file can be read.
 import Foundation
 
 @main

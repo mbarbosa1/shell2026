@@ -73,7 +73,7 @@ struct ShopView: View {
                             .accessibilityHint("Shows the shortest way through the store to everything on your list")
                     }
 
-                    Button("Start shopping") { model.isCameraOpen = true }
+                    Button("Start shopping") { model.startShopping() }
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityHint("Opens the camera on the shopping mount")
                 }
@@ -177,6 +177,11 @@ struct GroceryRow<Item: ItemDescribing>: View {
                 }
             }
             Spacer(minLength: 0)
+            if let price = item.price {
+                Text(price, format: .currency(code: "USD"))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+            }
             Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
                 .font(.title3)
                 .foregroundStyle(isChecked ? Theme.lavender : Theme.textPrimary.opacity(0.8))
@@ -187,14 +192,20 @@ struct GroceryRow<Item: ItemDescribing>: View {
         if let action {
             Button(action: action) { content }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(item.name), \(item.detail)")
+                .accessibilityLabel(accessibilityLabel)
                 .accessibilityValue(isChecked ? "In cart" : "Not in cart")
                 .accessibilityHint("Double-tap to change")
         } else {
             content
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(item.name), \(item.detail)")
+                .accessibilityLabel(accessibilityLabel)
                 .accessibilityValue(isChecked ? "On your list" : "")
         }
+    }
+
+    /// VoiceOver reads the price too, since it's on screen.
+    private var accessibilityLabel: String {
+        let price = item.price.map { $0.formatted(.currency(code: "USD")) }
+        return [item.name, item.detail, price].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }
