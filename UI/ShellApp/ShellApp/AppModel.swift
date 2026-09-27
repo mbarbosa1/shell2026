@@ -242,6 +242,7 @@ final class AppModel {
         navigator.onStopChanged = { [weak self, weak navigator] stop in
             guard let navigator else { return }
             self?.scan(at: stop, with: navigator)
+            self?.updateMicrophone(atStop: stop != nil, for: navigator)
         }
         navigator.onFrame = { [weak self] buffer, time, focusing in
             self?.scanner.receive(buffer, at: time, isAdjustingFocus: focusing)
@@ -250,6 +251,8 @@ final class AppModel {
         // The phone sits on the cart the whole walk: don't let it lock.
         UIApplication.shared.isIdleTimerDisabled = true
         navigator.start()
+        // Connects Mira for the walk, with her mic off unless the route began at a stop.
+        updateMicrophone(atStop: navigator.activeStop != nil, for: navigator)
         // Started from the route screen rather than "Start shopping": ARKit isn't running yet.
         // Does nothing when it already is, so tracking isn't reset.
         if !navigator.isSimulated {
@@ -267,6 +270,23 @@ final class AppModel {
         UIApplication.shared.isIdleTimerDisabled = false
         // The camera stays on while shopping; it only goes off at the cashier or with the X.
         if !isCameraOpen { camera.stop() }
+    }
+
+    /// Mira's mic follows the walk. It's off while walking: she's sensitive enough to pick up the
+    /// store and the spoken directions. At a stop it turns on once the arrival has been read out,
+    /// so the user can talk to her about the item. The camera screen's mic button overrides it
+    /// until the next stop or leg.
+    private func updateMicrophone(atStop: Bool, for navigator: RouteNavigator) {
+        guard atStop else {
+            Task { await setMicrophone(on: false) }
+            return
+        }
+        // Waiting for the narrator, or Mira would hear "Stop. You're at aisle 14…" as the user.
+        narrator.whenQuiet { [weak self, weak navigator] in
+            // The user may have left the stop, or ended the walk, while it was being read out.
+            guard let self, let navigator, self.navigator === navigator, navigator.activeStop != nil else { return }
+            Task { await self.setMicrophone(on: true) }
+        }
     }
 
     // MARK: Item recognition
@@ -330,6 +350,14 @@ final class AppModel {
         // VoiceOver already reads the screen aloud. The agent talking too would make both unusable.
         if isListening && UIAccessibility.isVoiceOverRunning { return }
         await voice?.setListening(isListening)
+    }
+
+    /// Turns Mira's microphone on or off without hanging up, so she can still talk, connecting to
+    /// her first if needed. Used while shopping and by the camera screen's mic button.
+    func setMicrophone(on: Bool) async {
+        // Same rule as `setListening`: with VoiceOver on, Mira stays off.
+        guard !UIAccessibility.isVoiceOverRunning else { return }
+        await voice?.setMicrophone(on: on)
     }
 
     /// Called when VoiceOver is turned on or off. Turning it on hangs up the agent;
