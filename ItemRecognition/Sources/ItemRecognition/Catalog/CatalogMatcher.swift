@@ -21,9 +21,21 @@ public struct CatalogMatcher: Sendable {
     public static let neighborhoodHeights: CGFloat = 2
     public init() {}
 
+    /// With a `query`, the target is scored on the shopper's grocery-list words
+    /// (see `matchQuery`); other products keep their title scores.
     public func match(_ observation: ProductTextObservation, against candidates: [CatalogItemSnapshot],
                       requireDiscriminatingTerms: Bool = false, targetID: UUID? = nil,
-                      index: ShelfWordIndex? = nil) -> [CatalogMatch] {
+                      index: ShelfWordIndex? = nil, query: GroceryQuery? = nil) -> [CatalogMatch] {
+        let titled = matchTitles(observation, against: candidates, requireDiscriminatingTerms: requireDiscriminatingTerms,
+                                 targetID: targetID, index: index)
+        let targetItem = candidates.first { $0.id == (targetID ?? observation.targetItemID) }
+        guard let query, !query.words.isEmpty, let targetItem else { return titled }
+        return matchQuery(query, lines: observation.candidates, target: targetItem, against: candidates, titleMatches: titled)
+    }
+
+    private func matchTitles(_ observation: ProductTextObservation, against candidates: [CatalogItemSnapshot],
+                             requireDiscriminatingTerms: Bool, targetID: UUID?,
+                             index: ShelfWordIndex?) -> [CatalogMatch] {
         let target = targetID.flatMap { id in candidates.first { $0.id == id } } ?? candidates.first { $0.id == observation.targetItemID }
         let anchors = target.map { index?.anchors(for: $0.id) ?? ItemTypeAnchor.words(from: $0.itemType) } ?? []
         // The type word is only required when the product's own name uses it: oatmeal

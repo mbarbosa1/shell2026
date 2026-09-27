@@ -12,7 +12,7 @@ final class DemoCalibration: ObservableObject {
         var landmarkID: String
         var activateAfterMeters: Double
         var deactivateAfterMeters: Double
-        /// Share of the target's title words OCR must read (`RecognitionPolicy.minimumScore`).
+        /// Share of the grocery-list words OCR must read (`RecognitionPolicy.minimumQueryScore`).
         var matchCoverage: Double
         /// Apple Vision score the produce label must reach (`VisualRecognitionPolicy.minimumScore`).
         var produceScore: Double
@@ -26,7 +26,7 @@ final class DemoCalibration: ObservableObject {
     }
 
     static let defaultSession = Session(landmarkID: "demo-aisle", activateAfterMeters: 3, deactivateAfterMeters: 20,
-                                        matchCoverage: 0.40, produceScore: 0.30)
+                                        matchCoverage: 0.65, produceScore: 0.30)
 
     @Published var session = defaultSession {
         didSet {
@@ -61,7 +61,7 @@ final class DemoCalibration: ObservableObject {
                                         deactivateAfterMeters: session.deactivateAfterMeters)
     }
 
-    var recognitionPolicy: RecognitionPolicy { RecognitionPolicy(minimumScore: Float(session.matchCoverage)) }
+    var recognitionPolicy: RecognitionPolicy { RecognitionPolicy(minimumQueryScore: Float(session.matchCoverage)) }
 
     /// Same shape as `VisualRecognitionPolicy.appleVisionProduce`, with the score from the slider.
     var visualPolicy: VisualRecognitionPolicy {

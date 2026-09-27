@@ -213,9 +213,9 @@ final class CatalogMatchingTests: XCTestCase {
         XCTAssertNil(update.guidance)
     }
 
-    func testPackagedItemStaysOnOCR() async throws {
+    func testPackagedItemStaysOnOCREvenWithAClassifier() async throws {
         let vision = FallbackVision()
-        let session = try await session(detector: MatchingRegion(crop: nil, guidance: .moveCloser), ocrFallback: vision)
+        let session = try await session(detector: MatchingRegion(crop: nil, guidance: .moveCloser), visualClassifier: vision)
         var processed: [RecognitionUpdate] = []
         for index in 1...15 {
             let update = try await session.submit(context(), image: image(Double(index) / 10))
@@ -275,10 +275,10 @@ final class CatalogMatchingTests: XCTestCase {
 
     private func session(recognizer: MatchingRecognizer = MatchingRecognizer(),
                          detector: MatchingRegion = MatchingRegion(),
-                         ocrFallback: (any VisualClassifying)? = nil,
+                         visualClassifier: (any VisualClassifying)? = nil,
                          policy: RecognitionPolicy = RecognitionPolicy()) async throws -> RecognitionCoordinator {
         try await RecognitionCoordinator(targetID: targetID, catalog: MatchingCatalog(targetID: targetID, candidates: candidates),
-            recognizer: recognizer, detector: detector, policy: policy, ocrFallback: ocrFallback, assessor: nil)
+            recognizer: recognizer, detector: detector, policy: policy, visualClassifier: visualClassifier, assessor: nil)
     }
     private func context(meters: Double = 5, pause: Bool = false) -> RecognitionContext {
         RecognitionContext(targetItemID: targetID, landmarkProgress: LandmarkProgressObservation(timestamp: 0,

@@ -59,7 +59,12 @@ public protocol VisualClassifying: Sendable {
     /// This contract requires finite scores in 0...1; other model outputs need
     /// an explicitly calibrated adapter rather than silent clamping.
     func classify(in image: RecognitionImage, crop: CGRect?) async throws -> VisualObservation
+    /// Detection turned on at this frame time: the shopper reached the item's spot in
+    /// the aisle. Called again after every pause or reactivation.
+    func searchStarted(at timestamp: TimeInterval) async
 }
+
+public extension VisualClassifying { func searchStarted(at timestamp: TimeInterval) async {} }
 
 /// Provisional demo thresholds; validate per model on the intended device.
 public struct VisualRecognitionPolicy: Sendable {

@@ -8,6 +8,9 @@ struct CalibrationPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text("Tester calibration — navigation stand-in, not shopper UI")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
             live
             monkey
             session
@@ -60,7 +63,7 @@ struct CalibrationPanel: View {
                           range: 0...30, step: 0.5, format: "%.1f m")
             LabeledSlider(title: "Stop recognizing after", value: $calibration.session.deactivateAfterMeters,
                           range: 0...40, step: 0.5, format: "%.1f m")
-            LabeledSlider(title: "Match coverage (OCR)", value: $calibration.session.matchCoverage,
+            LabeledSlider(title: "List words read (OCR)", value: $calibration.session.matchCoverage,
                           range: 0.1...1, step: 0.05, format: "%.0f%%", scale: 100)
             LabeledSlider(title: "Produce score (Apple Vision)", value: $calibration.session.produceScore,
                           range: 0.05...1, step: 0.05, format: "%.0f%%", scale: 100)
@@ -76,7 +79,7 @@ struct CalibrationPanel: View {
     }
 }
 
-private struct LabeledSlider: View {
+struct LabeledSlider: View {
     let title: String
     @Binding var value: Double
     let range: ClosedRange<Double>

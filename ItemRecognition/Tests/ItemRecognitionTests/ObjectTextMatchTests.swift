@@ -157,7 +157,8 @@ final class ObjectTextMatchTests: XCTestCase {
         XCTAssertNotEqual(last?.guidance, .moveRight, "no left/right advice before the catalog picks a box")
     }
 
-    func testAppearancePathStillWantsOneItemInView() async throws {
+    func testAppearancePathClassifiesSeveralObjectsAsOnePicture() async throws {
+        // A bin of apples: the mask boxes each one; the union is classified.
         let vision = CountingVision()
         let apple = CatalogItemSnapshot(id: milkID, catalogKey: "apple", displayName: "Gala Apple", brand: nil,
             normalizedTerms: [], visual: VisualCatalogMetadata(modelID: "counting.vision", classIDs: ["apple"],
@@ -167,10 +168,30 @@ final class ObjectTextMatchTests: XCTestCase {
             recognizer: SceneRecognizer(rows: []), visualClassifier: vision,
             assessor: TwoObjects(boxes: [milkBox, otherBox]))
         var last: RecognitionUpdate?
-        for index in 1...5 { last = try await session.submit(context(), image: image(Double(index) / 10)) }
-        XCTAssertEqual(last?.assessment?.quality, .multipleObjects)
+        for index in 1...15 {
+            let update = try await session.submit(context(), image: image(Double(index) / 10))
+            if update.result != nil { last = update }
+        }
+        let union = try VisionFrameAssessor.multipleObjects([milkBox, otherBox], image: image(0), continuityLost: false)
+        XCTAssertEqual(last?.result?.visualEvidence?.inputRegion, union.objectRegion)
+        XCTAssertEqual(last?.result?.status, .confirmed)
         let calls = await vision.calls
-        XCTAssertEqual(calls, 0)
+        XCTAssertEqual(calls, 3)
+    }
+
+    func testAppearanceAcceptsCloseUpsAndPilesButNotBlurOrOneTinyItem() {
+        let region = CGRect(x: 0, y: 0, width: 10, height: 10)
+        func assessment(_ quality: FrameAssessment.Quality, _ boxes: [CGRect]) -> FrameAssessment {
+            FrameAssessment(objectRegion: region, quality: quality, objectBoxes: boxes)
+        }
+        let small = CGRect(x: 0.1, y: 0.1, width: 0.15, height: 0.15)
+        let pile = [small, CGRect(x: 0.5, y: 0.5, width: 0.15, height: 0.15)]
+        XCTAssertTrue(assessment(.clipped, [CGRect(x: 0, y: 0, width: 1, height: 0.95)]).isClassifiable)
+        XCTAssertTrue(assessment(.tooSmall, pile).isClassifiable, "the pile spans more than a single item")
+        XCTAssertFalse(assessment(.tooSmall, [small]).isClassifiable)
+        XCTAssertFalse(assessment(.tooSmall, [small, CGRect(x: 0.2, y: 0.2, width: 0.05, height: 0.05)]).isClassifiable)
+        XCTAssertFalse(assessment(.moving, [small]).isClassifiable)
+        XCTAssertFalse(FrameAssessment(objectRegion: nil, quality: .notLocated).isClassifiable)
     }
 
     private func context() -> RecognitionContext {

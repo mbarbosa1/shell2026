@@ -144,7 +144,8 @@ def make_handler(config, send=call_gemini):
 
         def do_GET(self):
             if self.path == "/healthz":
-                self._reply(200, {"ok": True, "mock": bool(config.get("mock_label"))})
+                model = "mock" if config.get("mock_label") else config.get("model") or "gemini-3.1-flash-lite"
+                self._reply(200, {"ok": True, "mock": bool(config.get("mock_label")), "model": model})
             else:
                 self._reply(404, {"error": "not found"})
 

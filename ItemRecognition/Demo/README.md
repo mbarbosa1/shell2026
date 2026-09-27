@@ -28,10 +28,27 @@ xcodebuild -project ItemRecognition/Demo/ItemRecognitionDemo.xcodeproj -scheme I
 | **Title words read** / **Label score** | This frame's evidence for the target, with the threshold it must reach. The black tick is the threshold. |
 | **Match confidence** | The same evidence averaged over recent frames. |
 | **OCR read quality** | How sure Vision is about the letters. This is read quality, not whether the product is right. |
-| **Best match** | The item the matcher picked. It appears in orange when it's a neighbor rather than your target. |
+| **Stopped at** | Where the latest frame stopped: activation, localization, cropping, ocr/classification, matching, confirming, or awaiting shopper, with the reason (for example `cropping · textTooSmall`). |
+| **Best match** | The item whose words scored highest on the latest frame. It appears in orange when it's a neighbor rather than your target. |
+| **Result** | `candidate`, `noMatch`, `confirmed`, or **category match** when only the kind of produce was recognized. |
 | **What it sees** | Produce labels with their scores, or each OCR line with its confidence. |
 
-When the app is confident, it asks **Is this …?**. Answer **Yes** to finish, or **No** to keep looking.
+When the app is confident, it asks. A label match asks **Is this <product>?**. A produce match can only
+recognize the kind of produce, so it asks **This looks like onion. Is it <product>?** and reminds you to
+check variety and size. Answer **Yes** to finish, or **No** to keep looking.
+
+Frames taken while the camera refocuses are skipped (the capture passes `AVCaptureDevice.isAdjustingFocus`
+with each frame), and the arrow says **Hold the phone steady**.
+
+Packaged items only read the label. There is no switch to appearance recognition when no text is found:
+a produce classifier cannot tell packages apart. The arrow asks you to turn the label toward the camera instead.
+
+## Baseline trials
+
+Turn on **Record baseline trials** in the item list to measure where recognition fails. Each Start→Stop is
+one trial; the camera then waits for **Start** so you can say what is in view first. Trials are appended to a
+CSV you can export from the list. The full protocol, trial plan and a summary script are in
+[`../Baseline/README.md`](../Baseline/README.md).
 
 ## Items
 
@@ -52,10 +69,11 @@ show Cool Ranch as the best match, not confirm the target.
 | Position reliable / Paused / Wrong landmark | on / off / off | next frame |
 | Landmark ID | `demo-aisle` | restart |
 | Start recognizing at / Stop after | 3 m / 20 m | restart |
-| Match coverage (OCR) | 40% | restart |
+| List words read (OCR) | 65% | restart |
 | Produce score (Apple Vision) | 30% | restart |
 
-The defaults are the library's own defaults (`RecognitionPolicy`, `VisualRecognitionPolicy.appleVisionProduce`).
+The defaults are the library's own defaults (`RecognitionPolicy.minimumQueryScore`, `VisualRecognitionPolicy.appleVisionProduce`).
+Label items are matched against the **Grocery list entry** on the scan screen (prefilled per item, e.g. "2% milk"), not the catalog title. Edit it before Start to try what a shopper would type.
 Window and threshold changes need a restart because `ActivationGate` loads the rule once per scan.
 The panel turns yellow and shows **Restart to apply** when they differ from the running scan.
 
@@ -72,7 +90,7 @@ one time in ten, jump anywhere in range. Pause, unreliable, and wrong landmark a
 3. **Produce:** target the onion and frame an onion. Its score should pass 30%, then you're asked.
    Try a potato: onion should stay below the threshold.
 4. **Lookalikes:** target Doritos Nacho Cheese and show Cool Ranch. The best match should be the neighbor.
-5. **Thresholds:** raise match coverage to 80% and restart. The same label should stop confirming.
+5. **Thresholds:** set the list entry to three words, raise *List words read* to 100% and restart. A label showing two of the words should stop confirming.
 6. **Monkey:** run it for a minute while pointing at the target. Recognition must only run while the gate is
    *Active*, and must never confirm while paused or past the window.
 

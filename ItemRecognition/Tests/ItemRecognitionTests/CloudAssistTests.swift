@@ -156,98 +156,96 @@ final class CloudAssistTests: XCTestCase {
         }
     }
 
-    func testStrongLocalEvidenceNeverCallsCloud() async throws {
+    func testAppleVisionWorksAloneFirstThenGeminiTwiceAtMost() async throws {
         let cloud = FakeCloud()
-        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.95), cloud: cloud)
-        let observation = try await classifier.classify(in: image(1), crop: nil)
-        XCTAssertEqual(observation.kind, .modelScores)
-        XCTAssertEqual(observation.classifications.first?.identifier, "onion")
-        let calls = await cloud.calls
-        XCTAssertEqual(calls, 0)
-    }
-
-    /// Frames 1–2 weak: on device. Frame 3: Gemini. Frames 4–5: on device.
-    /// Frame 6: second and last Gemini call. Frame 7 onward: on device.
-    func testWeakLocalEvidenceUsesCloudWithStableModelVersion() async throws {
-        let cloud = FakeCloud()
-        let local = try ProduceCategoryClassifier(base: FakeBase(score: 0.95), cloud: cloud)
-        let weak = try ProduceCategoryClassifier(base: FakeBase(score: 0.3), cloud: cloud)
-        let strong = try await local.classify(in: image(1), crop: nil)
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.2), cloud: cloud)
         let region = CGRect(x: 8, y: 6, width: 32, height: 24)
-
-        for frame in 1...2 {
-            let observation = try await weak.classify(in: image(Double(frame)), crop: region)
-            XCTAssertEqual(observation.kind, .modelScores, "frame \(frame) stays on device")
-            XCTAssertNil(observation.diagnostic, "frame \(frame) is a plain weak frame, not a failure")
-        }
+        await classifier.searchStarted(at: 0)
+        let early = try await classifier.classify(in: image(4.9), crop: region)
+        XCTAssertEqual(early.kind, .modelScores, "Apple Vision alone for the first 5 s at the item")
         var calls = await cloud.calls
-        XCTAssertEqual(calls, 0, "one or two weak frames are normal in video")
+        XCTAssertEqual(calls, 0)
 
-        let assisted = try await weak.classify(in: image(3), crop: region)
-        XCTAssertEqual(assisted.kind, .cloudSuggestion)
-        XCTAssertEqual(assisted.classifications, [.init(identifier: "onion", score: 0.93)])
-        XCTAssertEqual(assisted.modelVersion, strong.modelVersion, "Switching source must not reset confirmation")
-        XCTAssertEqual(assisted.inputRegion, region)
+        let asked = try await classifier.classify(in: image(5), crop: region)
+        XCTAssertEqual(asked.kind, .cloudSuggestion)
+        XCTAssertEqual(asked.classifications, [.init(identifier: "onion", score: 0.93)])
+        XCTAssertEqual(asked.diagnostic, "Cloud model fake-cloud")
+        XCTAssertEqual(asked.inputRegion, region)
         let jpeg = await cloud.lastJPEG
         XCTAssertEqual(jpeg?.prefix(2), Data([0xFF, 0xD8]))
         let labels = await cloud.lastLabels
         XCTAssertTrue(labels.contains("onion") && labels.contains("unknown"))
 
-        for frame in 4...5 {
-            let observation = try await weak.classify(in: image(Double(frame)), crop: region)
-            XCTAssertEqual(observation.kind, .modelScores, "frame \(frame) waits for a new streak")
-        }
+        let next = try await classifier.classify(in: image(6), crop: region)
+        XCTAssertEqual(next.kind, .modelScores, "a Gemini label is never reused for a later frame")
+        XCTAssertEqual(next.modelVersion, asked.modelVersion, "switching source must not reset confirmation")
+        _ = try await classifier.classify(in: image(10.9), crop: region)
         calls = await cloud.calls
-        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(calls, 1, "Apple Vision gets another 5 s from the first frame after the answer")
+        _ = try await classifier.classify(in: image(11), crop: region)
+        _ = try await classifier.classify(in: image(30), crop: region)
+        calls = await cloud.calls
+        XCTAssertEqual(calls, 2, "two calls per item at most")
 
-        let second = try await weak.classify(in: image(6), crop: region)
-        XCTAssertEqual(second.kind, .cloudSuggestion, "a second streak earns the last call for this item")
-        calls = await cloud.calls
-        XCTAssertEqual(calls, 2)
-
-        for frame in 7...12 {
-            let observation = try await weak.classify(in: image(Double(frame)), crop: region)
-            XCTAssertEqual(observation.kind, .modelScores, "frame \(frame): the item's two calls are used up")
-        }
-        calls = await cloud.calls
-        XCTAssertEqual(calls, 2)
+        let usage = await classifier.usage()
+        XCTAssertEqual(usage.calls, 2)
+        XCTAssertEqual(usage.limit, 2)
+        XCTAssertNil(usage.secondsUntilCall, "no call remains")
+        XCTAssertEqual(usage.lastLabel?.label, "onion")
+        XCTAssertNotNil(usage.lastSeconds)
     }
 
-    func testStrongFrameResetsWeakStreak() async throws {
+    func testReachingTheItemAgainRestartsTheAppleVisionWindow() async throws {
         let cloud = FakeCloud()
-        let base = SequenceBase(scores: [0.3, 0.3, 0.95, 0.3, 0.3, 0.3])
-        let classifier = try ProduceCategoryClassifier(base: base, cloud: cloud)
-        var kinds: [VisualObservation.Kind] = []
-        for frame in 1...6 { kinds.append(try await classifier.classify(in: image(Double(frame)), crop: nil).kind) }
-        XCTAssertEqual(kinds, [.modelScores, .modelScores, .modelScores, .modelScores, .modelScores, .cloudSuggestion])
-        let calls = await cloud.calls
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.2), cloud: cloud)
+        await classifier.searchStarted(at: 0)
+        _ = try await classifier.classify(in: image(4), crop: nil)
+        await classifier.searchStarted(at: 8)
+        _ = try await classifier.classify(in: image(12), crop: nil)
+        var calls = await cloud.calls
+        XCTAssertEqual(calls, 0, "only 4 s since the shopper came back")
+        let usage = await classifier.usage()
+        XCTAssertEqual(usage.secondsUntilCall, 1)
+        _ = try await classifier.classify(in: image(13), crop: nil)
+        calls = await cloud.calls
         XCTAssertEqual(calls, 1)
+    }
+
+    func testInFlightFrameUsesAppleVisionAndNeverReusesTheLabel() async throws {
+        let cloud = FakeCloud(delayNanoseconds: 200_000_000)
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.3), cloud: cloud,
+                                                       cloudPolicy: CloudAssistPolicy(appleVisionSeconds: 0))
+        let region = CGRect(x: 8, y: 6, width: 32, height: 24)
+        async let first = classifier.classify(in: image(1), crop: region)
+        try await Task.sleep(nanoseconds: 40_000_000)
+        let overlapping = try await classifier.classify(in: image(2), crop: region)
+        let answered = try await first
+        XCTAssertEqual(answered.kind, .cloudSuggestion)
+        XCTAssertEqual(overlapping.kind, .modelScores)
+        XCTAssertEqual(overlapping.classifications.first, .init(identifier: "onion", score: 0.3))
+        let after = try await classifier.classify(in: image(3), crop: region)
+        XCTAssertEqual(after.kind, .cloudSuggestion, "with no solo window, the second call runs on the next frame")
+        let calls = await cloud.calls
+        XCTAssertEqual(calls, 2)
     }
 
     func testCloudFailureInvalidLabelAndRequestLimitFallBackToLocal() async throws {
-        for (cloud, policy) in [(FakeCloud(error: URLError(.timedOut)), CloudAssistPolicy(maximumRequests: 5)),
-                                (FakeCloud(label: "yellow_onion"), CloudAssistPolicy(maximumRequests: 5)),
-                                (FakeCloud(), CloudAssistPolicy(maximumRequests: 0)),
-                                (FakeCloud(), CloudAssistPolicy(maximumRequestsPerItem: 0))] {
+        for (cloud, policy) in [(FakeCloud(error: URLError(.timedOut)), CloudAssistPolicy(maximumRequests: 5, appleVisionSeconds: 0)),
+                                (FakeCloud(label: "yellow_onion"), CloudAssistPolicy(maximumRequests: 5, appleVisionSeconds: 0))] {
             let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.3), cloud: cloud, cloudPolicy: policy)
-            for frame in 1...2 {
-                let early = try await classifier.classify(in: image(Double(frame)), crop: nil)
-                XCTAssertEqual(early.kind, .modelScores)
-                XCTAssertNil(early.diagnostic)
-            }
-            let observation = try await classifier.classify(in: image(3), crop: nil)
+            let observation = try await classifier.classify(in: image(1), crop: nil)
             XCTAssertEqual(observation.kind, .modelScores)
             XCTAssertEqual(observation.classifications.first, .init(identifier: "onion", score: 0.3))
             XCTAssertNotNil(observation.diagnostic)
+            let usage = await classifier.usage()
+            XCTAssertEqual(usage.calls, 1)
+            XCTAssertNil(usage.lastLabel)
+            XCTAssertNotNil(usage.lastFailure)
         }
-    }
-
-    func testFailedRequestStillCountsTowardTheItemCap() async throws {
-        let cloud = FakeCloud(error: URLError(.timedOut))
-        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.3), cloud: cloud)
-        for frame in 1...9 { _ = try await classifier.classify(in: image(Double(frame)), crop: nil) }
-        let calls = await cloud.calls
-        XCTAssertEqual(calls, 2, "frames 3 and 6 call; frame 9 stays on device")
+        let capped = try ProduceCategoryClassifier(base: FakeBase(score: 0.3), cloud: FakeCloud(),
+                                                   cloudPolicy: CloudAssistPolicy(maximumRequests: 0, appleVisionSeconds: 0))
+        let local = try await capped.classify(in: image(1), crop: nil)
+        XCTAssertEqual(local.kind, .modelScores, "no calls allowed")
     }
 
     func testCategoryModelConfirmsTargetEvenWhenNeighborsShareLabel() throws {
@@ -279,72 +277,44 @@ final class CloudAssistTests: XCTestCase {
             timestamp: 0, passedLandmarkID: "home-test", metersPastLandmark: 5, isReliable: true), externalPause: false)
     }
 
-    /// The scheduler processes every 5th active frame, so 50 submissions are 10
-    /// processed frames: Gemini answers on the 3rd and 6th, then never again.
-    /// Two cloud hits are two accepted observations at most; the weak local frames
-    /// between them reset the count, so the item never confirms on the cloud alone.
-    func testTwoCloudAnswersAloneDoNotConfirmThroughCoordinator() async throws {
+    /// The scheduler processes every 5th active frame (0.5 s apart here). Detection
+    /// turns on at 0.1 s; Apple Vision stays below the produce threshold, so the first
+    /// processed frame at least 5 s later asks Gemini, and its passing answer asks the
+    /// shopper at once.
+    func testGeminiAnswerAsksTheShopperAfterAppleVisionHadItsTime() async throws {
         let cloud = FakeCloud()
         let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.2), cloud: cloud)
-        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier, assessor: nil)
-        var statuses: [ItemRecognitionResult.Status] = []
-        var cloudFrames = 0
-        for frame in 1...50 {
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog,
+            visualClassifier: classifier, visualPolicy: .appleVisionProduce, assessor: nil)
+        var notices: [(frame: Int, notice: RecognitionModeNotice)] = []
+        var confirmedAt: Int?
+        var latest: RecognitionUpdate?
+        for frame in 1...80 {
             let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
             guard let result = update.result else { continue }
-            statuses.append(result.status)
-            if update.visualObservation?.kind == .cloudSuggestion {
-                cloudFrames += 1
-                XCTAssertEqual(result.status, .candidate, "a passing cloud label is evidence, not a confirmation")
-                XCTAssertEqual(result.visualMatchReason, .acceptedCategory)
-            }
-        }
-        XCTAssertEqual(cloudFrames, 2)
-        let calls = await cloud.calls
-        XCTAssertEqual(calls, 2)
-        XCTAssertFalse(statuses.contains(.confirmed), "stays a candidate until an on-device frame also passes: \(statuses)")
-    }
-
-    /// The user is told when the heavier model answers: `.cloudAssist` only on the
-    /// frames whose evidence came from Gemini, `.appleVision` on every other visual frame.
-    func testModeNoticeNamesGeminiOnlyOnCloudFrames() async throws {
-        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.2), cloud: FakeCloud())
-        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier, assessor: nil)
-        var notices: [RecognitionModeNotice] = []
-        for frame in 1...35 {
-            let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
-            XCTAssertNil(update.guidance, "visual mode gives no OCR framing advice")
-            guard update.result != nil else {
-                XCTAssertEqual(update.modeNotice, .appleVision, "skipped frames still name the session's recognizer")
-                continue
-            }
-            notices.append(update.modeNotice)
-        }
-        XCTAssertEqual(notices, [.appleVision, .appleVision, .cloudAssist, .appleVision, .appleVision, .cloudAssist, .appleVision])
-    }
-
-    /// Weak ×3 (cloud #1), weak ×3 (cloud #2), then two on-device frames that pass:
-    /// cloud #2 plus those two make the three accepted observations.
-    func testCloudAnswerMixedWithLaterLocalPassesConfirmsThroughCoordinator() async throws {
-        let cloud = FakeCloud()
-        let base = SequenceBase(scores: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.95, 0.95])
-        let classifier = try ProduceCategoryClassifier(base: base, cloud: cloud)
-        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog, visualClassifier: classifier, assessor: nil)
-        var latest: RecognitionUpdate?
-        var confirmedAt: Int?
-        for frame in 1...40 {
-            let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
-            guard update.result != nil else { continue }
             latest = update
-            if update.result?.status == .confirmed, confirmedAt == nil { confirmedAt = frame }
+            if confirmedAt == nil { notices.append((frame, update.modeNotice)) }
+            if result.status == .confirmed, confirmedAt == nil { confirmedAt = frame }
         }
-        XCTAssertEqual(confirmedAt, 40, "6 weak processed frames, cloud #2 on the 6th, local passes on the 7th and 8th")
-        XCTAssertEqual(latest?.result?.status, .confirmed)
+        XCTAssertEqual(confirmedAt, 55)
+        XCTAssertTrue(notices.dropLast().allSatisfy { $0.notice == .appleVision })
+        XCTAssertEqual(notices.last?.notice, .cloudAssist)
+        XCTAssertEqual(latest?.awaitingVerdict, true)
         XCTAssertEqual(latest?.result?.matchedItemID, target)
-        XCTAssertEqual(latest?.result?.visualMatchReason, .acceptedCategory)
-        XCTAssertEqual(latest?.visualObservation?.kind, .modelScores)
         let calls = await cloud.calls
-        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testPauseRestartsTheWindowWhenTheShopperIsBackAtTheItem() async throws {
+        let classifier = StartRecorder()
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog,
+            visualClassifier: classifier, assessor: nil)
+        for frame in 1...10 { _ = try await session.submit(homeContext, image: image(Double(frame) / 10)) }
+        _ = try await session.updateContext(RecognitionContext(targetItemID: target, landmarkProgress: LandmarkProgressObservation(
+            timestamp: 1.05, passedLandmarkID: "home-test", metersPastLandmark: 5, isReliable: true), externalPause: true))
+        for frame in 11...20 { _ = try await session.submit(homeContext, image: image(Double(frame) / 10)) }
+        let starts = await classifier.starts
+        XCTAssertEqual(starts, [0.1, 1.1])
     }
 
     func testEncoderCropsOrientsAndDownscales() throws {
@@ -380,31 +350,33 @@ private struct FakeBase: VisualClassifying {
     }
 }
 
-/// Returns `scores` in call order and repeats the last one afterwards.
-private actor SequenceBase: VisualClassifying {
-    private let scores: [Float]
-    private var index = 0
-    init(scores: [Float]) { self.scores = scores }
-    nonisolated func modelInfo() -> VisualModelInfo { VisualModelInfo(id: "fake.local", version: "1", supportedClassIDs: ["onion"]) }
-    func classify(in image: RecognitionImage, crop: CGRect?) -> VisualObservation {
-        let score = scores[min(index, scores.count - 1)]
-        index += 1
-        return VisualObservation(timestamp: image.timestamp, modelID: "fake.local", modelVersion: "1",
-            inputRegion: crop ?? CGRect(origin: .zero, size: image.imageResolution),
-            classifications: [.init(identifier: "onion", score: score), .init(identifier: "vegetable", score: 0.99)])
-    }
-}
-
 private actor FakeCloud: CloudProduceLabeling {
     private let error: Error?
     private let result: String
+    private let delayNanoseconds: UInt64
     private(set) var calls = 0
     private(set) var lastJPEG: Data?
     private(set) var lastLabels: [String] = []
-    init(label: String = "onion", error: Error? = nil) { result = label; self.error = error }
+    init(label: String = "onion", error: Error? = nil, delayNanoseconds: UInt64 = 0) {
+        result = label; self.error = error; self.delayNanoseconds = delayNanoseconds
+    }
     func label(jpeg: Data, allowedLabels: [String]) async throws -> CloudProduceLabel {
         calls += 1; lastJPEG = jpeg; lastLabels = allowedLabels
+        if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
         if let error { throw error }
         return CloudProduceLabel(label: result, confidence: 0.93, model: "fake-cloud")
+    }
+}
+
+private actor StartRecorder: VisualClassifying {
+    private(set) var starts: [TimeInterval] = []
+    func modelInfo() -> VisualModelInfo {
+        VisualModelInfo(id: ProduceCategoryClassifier.modelID, version: "1", supportedClassIDs: ["onion", "unknown"])
+    }
+    func searchStarted(at timestamp: TimeInterval) async { starts.append(timestamp) }
+    func classify(in image: RecognitionImage, crop: CGRect?) -> VisualObservation {
+        VisualObservation(timestamp: image.timestamp, modelID: ProduceCategoryClassifier.modelID, modelVersion: "1",
+            inputRegion: crop ?? CGRect(origin: .zero, size: image.imageResolution),
+            classifications: [.init(identifier: "onion", score: 0.1)])
     }
 }

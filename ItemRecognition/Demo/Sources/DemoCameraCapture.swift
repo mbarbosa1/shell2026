@@ -17,6 +17,8 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
     private let queue = DispatchQueue(label: "ItemRecognitionDemo.camera", qos: .userInitiated)
     private let receive: @Sendable (Event) -> Void
     private let output = AVCaptureVideoDataOutput()
+    /// Read on every frame so the assessor drops frames taken while the lens refocuses.
+    private var camera: AVCaptureDevice?
     private var configured = false
     private var scanning = false
     private var processing = false
@@ -108,6 +110,7 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         // The app and preview are locked to portrait to keep this demo simple.
         connection.videoRotationAngle = 90
         output.setSampleBufferDelegate(self, queue: queue)
+        self.camera = camera
         configured = true
     }
 
@@ -120,7 +123,7 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         let timestamp = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         let image = RecognitionImage(timestamp: timestamp, pixelBuffer: buffer,
             imageResolution: CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer)),
-            orientation: .up)
+            orientation: .up, isAdjustingFocus: camera?.isAdjustingFocus ?? false)
         let context = RecognitionContext(targetItemID: suppliedContext.targetItemID,
             landmarkProgress: LandmarkProgressObservation(timestamp: timestamp,
                 passedLandmarkID: suppliedContext.landmarkProgress.passedLandmarkID,
@@ -135,7 +138,9 @@ final class DemoCameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDel
             let event: Event?
             do {
                 let update = try await coordinator.submit(context, image: image)
-                event = update.result != nil ? .update(update, Date().timeIntervalSince(started) * 1000) : nil
+                // The one-minute notice arrives without a result; it must still reach the screen.
+                let carries = update.result != nil || update.advanceNotice != nil
+                event = carries ? .update(update, Date().timeIntervalSince(started) * 1000) : nil
             } catch {
                 event = .failure("Recognition failed: \(error.localizedDescription). Tap Start camera to retry.")
             }
