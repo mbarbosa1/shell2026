@@ -78,12 +78,25 @@ extension StoreMap {
     /// Node 1 is the only way into the grocery section, so every route starts with the same walk
     /// from the entrance and ends with the same walk to the cashier.
     ///
-    /// Map frame: the grocery session's, with y pointing to the back of the store. Grocery lanes
-    /// run up the map, and the aisle numbers grow to the right.
+    /// Drawn like the Target app's map: the back wall on the left, aisle numbers growing up the
+    /// map, the entrance at the bottom right. Positions are straightened (see `straighten`), so the
+    /// drawing shows the store's straight aisles instead of the sensor's drift.
     static let target = target(loading: CalibrationFile.bundled)
 
-    /// Aisles only walked at their ends get a lane this long (measured on aisles 16/17 and 34/35).
+    /// Length of every aisle from 14/15 up: measured on its own, between the store walks' 13.7 m
+    /// (16/17) and 12.0 m (34/35).
     static let aisleMeters = 12.7
+
+    /// The ends of the aisles from 13 up, as (aisle pairs from aisle 13, node). These aisles are
+    /// evenly spaced in the store, so the walked gaps between them are averaged (see `spaceEvenly`).
+    static let aisleRows: [[(step: Int, id: String)]] = [
+        [(0, "2"), (1, "14_15Front"), (2, "16_17Front"), (3, "18_19Front"), (4, "20_21Front"),
+         (5, "22_23Front"), (6, "24_25Front"), (7, "26_27Front"), (8, "28_29Front"), (9, "30_31Front"),
+         (10, "32_33Front"), (11, "34_35Front")],
+        [(0, "8"), (1, "14_15Back"), (2, "16_17Back"), (3, "18_19Back"), (4, "20_21Back"),
+         (5, "22_23Back"), (6, "24_25Back"), (7, "26_27Back"), (8, "28_29Back"), (9, "30_31Back"),
+         (11, "34_35Back")],
+    ]
 
     static func target(loading load: (String) -> CalibrationFile?) -> StoreMap {
         guard let grocery = load("target-grocery"),
@@ -127,16 +140,34 @@ extension StoreMap {
             "N26": ("16_17Back", "16/17 Back"), "N27": ("14_15Back", "14/15 Back"),
         ])
 
-        // One straight walk from node 1. The session doesn't record which way that is on the map,
-        // so the cashier is drawn toward the entrance. Its length is measured; only the drawing guesses.
-        map.add(cashier, placement: map.placement(of: cashier, aiming: ("N1", "N2"), from: "1", toward: "entrance"), nodes: [
+        // One straight walk from node 1, placed after straightening (below).
+        map.add(cashier, placement: Placement(), nodes: [
             "N1": ("1", "Node 1"), "N2": ("cashier", "Cashier"),
         ])
 
-        // Aisles walked only at their ends.
-        for pair in ["14_15", "18_19", "22_23", "24_25", "26_27", "28_29", "30_31"] {
+        // Not walked: the front of 20/21, across from its back.
+        map.addNode("20_21Front", name: "20/21 Front", between: ("18_19Front", "22_23Front"))
+
+        // Even aisle spacing. Node 1 reached the aisle rows past node 2, so its shortcut to 14/15
+        // goes too; the grocery session's 2 → 16/17 and 8 → 16/17 pass 14/15 and are replaced too.
+        map.edges.removeAll { Set([$0.from, $0.to]) == ["1", "14_15Front"] }
+        map.spaceEvenly(rows: aisleRows)
+
+        // Every aisle the same length, walked or not.
+        let pairs = ["14_15", "16_17", "18_19", "20_21", "22_23", "24_25", "26_27", "28_29", "30_31", "34_35"]
+        map.edges.removeAll { edge in pairs.contains { Set([edge.from, edge.to]) == ["\($0)Front", "\($0)Back"] } }
+        for pair in pairs {
             map.edges.append(Edge(from: "\(pair)Front", to: "\(pair)Back", meters: aisleMeters))
         }
+
+        map.straighten(pinning: "1", except: ["cashier"])
+        // The cashier session doesn't record which way it walked, so the cashier is drawn beside
+        // the walk from the entrance, as far to the side as the entrance is. Only the drawing guesses:
+        // the walked length is measured.
+        map.place("cashier", from: "1", meters: cashier.edges.first?.lengthMeters ?? 0,
+                  alongside: ("turn1", "entrance"))
+        // A quarter turn counterclockwise, to match the Target app.
+        map.nodes = map.nodes.map { StoreMap.Node(id: $0.id, name: $0.name, x: -$0.y, y: $0.x) }
 
         let stops: [String: [Visit]] = [
             "G7": [.stop("1")],
@@ -147,6 +178,8 @@ extension StoreMap {
             "G13": Visit.lane(["2", "3", "9", "8"]),
             "G6": Visit.lane(["10", "5", "6"]),
             "G44": Visit.lane(["6", "7"]),
+            // The back wall, from aisle 17 to aisle 25.
+            "G42": Visit.lane(["16_17Back", "18_19Back", "20_21Back", "22_23Back", "24_25Back"], scanning: .left),
             "G14": Visit.lane(["14_15Front", "14_15Back"]),
             "G15": Visit.lane(["14_15Front", "14_15Back"]),
             "G16": Visit.lane(["16_17Front", "16_17Back"]),
@@ -223,15 +256,109 @@ private struct Assembly {
         return placement
     }
 
-    /// Pins the file's first node of `aiming` on map node `mapNode`, turned so the second one lies
-    /// in the direction of map node `target`.
-    func placement(of file: CalibrationFile, aiming: (String, String),
-                   from mapNode: String, toward target: String) -> Placement {
-        guard let a = file.node(aiming.0), let b = file.node(aiming.1),
-              let from = position(of: mapNode), let to = position(of: target) else { return Placement() }
-        let base = Placement()
-        let (ax, ay) = base(a.position), (bx, by) = base(b.position)
-        let angle = atan2(to.y - from.y, to.x - from.x) - atan2(by - ay, bx - ax)
-        return placement(of: file, turning: angle, pinning: aiming.0, to: mapNode)
+    /// Adds a node halfway between two others, to be placed properly by `straighten`.
+    mutating func addNode(_ id: String, name: String, between ends: (String, String)) {
+        guard let a = position(of: ends.0), let b = position(of: ends.1) else { return }
+        nodes.append(StoreMap.Node(id: id, name: name, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2))
+    }
+
+    /// Evenly spaced rows of aisle ends. `rows` lists each row's nodes in order with how many aisle
+    /// pairs along the row they are. The average walked meters per pair, over every row edge from
+    /// step 1 up, replaces all edges within a row: consecutive nodes get steps × that average.
+    mutating func spaceEvenly(rows: [[(step: Int, id: String)]]) {
+        var meters = 0.0, steps = 0
+        var rowOf: [String: Int] = [:], stepOf: [String: Int] = [:]
+        for (row, nodes) in rows.enumerated() {
+            for node in nodes { rowOf[node.id] = row; stepOf[node.id] = node.step }
+        }
+        for edge in edges {
+            guard let row = rowOf[edge.from], rowOf[edge.to] == row, let a = stepOf[edge.from],
+                  let b = stepOf[edge.to], min(a, b) >= 1, let length = edge.meters else { continue }
+            meters += length
+            steps += abs(a - b)
+        }
+        guard steps > 0 else { return }
+        let perStep = meters / Double(steps)
+        edges.removeAll { edge in rowOf[edge.from] != nil && rowOf[edge.from] == rowOf[edge.to] }
+        for row in rows {
+            for (a, b) in zip(row, row.dropFirst()) {
+                edges.append(StoreMap.Edge(from: a.id, to: b.id, meters: Double(b.step - a.step) * perStep))
+            }
+        }
+    }
+
+    /// Lines positions up the way the store is built. Aisles and walkways are straight and meet at
+    /// right angles, so every edge is made exactly horizontal or vertical, whichever it's closer to,
+    /// at its walked length. Where loops disagree on lengths, a least-squares fit spreads the
+    /// difference, with straightness weighted 100× over length so rows stretch instead of aisles
+    /// bending. Only positions move; edge lengths are unchanged.
+    mutating func straighten(pinning anchor: String, except skipped: Set<String>) {
+        struct Rule {
+            /// The other node, and where this one should be relative to it, with weights.
+            let other: Int
+            let dx, dy, weightX, weightY: Double
+        }
+        let index = Dictionary(uniqueKeysWithValues: nodes.enumerated().map { ($1.id, $0) })
+        var rules = [[Rule]](repeating: [], count: nodes.count)
+        for edge in edges where !skipped.contains(edge.from) && !skipped.contains(edge.to) {
+            guard let a = index[edge.from], let b = index[edge.to], let meters = edge.meters else { continue }
+            let dx = nodes[b].x - nodes[a].x, dy = nodes[b].y - nodes[a].y
+            let (x, y, weightX, weightY): (Double, Double, Double, Double) = abs(dx) >= abs(dy)
+                ? (dx < 0 ? -meters : meters, 0, 1, 100)
+                : (0, dy < 0 ? -meters : meters, 100, 1)
+            rules[b].append(Rule(other: a, dx: x, dy: y, weightX: weightX, weightY: weightY))
+            rules[a].append(Rule(other: b, dx: -x, dy: -y, weightX: weightX, weightY: weightY))
+        }
+        // Least squares, one axis at a time: each node's row says it sits where its edges put it,
+        // weighted. The anchor and nodes with no edges stay put. Solved by Gaussian elimination;
+        // the map is a few dozen nodes.
+        func solve(_ current: [Double], offset: (Rule) -> Double, weight: (Rule) -> Double) -> [Double] {
+            let n = nodes.count
+            var a = [[Double]](repeating: [Double](repeating: 0, count: n), count: n)
+            var b = current
+            for i in 0..<n {
+                if nodes[i].id == anchor || rules[i].isEmpty {
+                    a[i][i] = 1
+                    continue
+                }
+                b[i] = 0
+                for rule in rules[i] {
+                    a[i][i] += weight(rule)
+                    a[i][rule.other] -= weight(rule)
+                    b[i] += weight(rule) * offset(rule)
+                }
+            }
+            for column in 0..<n {
+                let pivot = (column..<n).max { abs(a[$0][column]) < abs(a[$1][column]) }!
+                a.swapAt(column, pivot)
+                b.swapAt(column, pivot)
+                for row in column + 1..<n where a[row][column] != 0 {
+                    let factor = a[row][column] / a[column][column]
+                    for k in column..<n { a[row][k] -= factor * a[column][k] }
+                    b[row] -= factor * b[column]
+                }
+            }
+            var solved = [Double](repeating: 0, count: n)
+            for row in (0..<n).reversed() {
+                solved[row] = (b[row] - (row + 1..<n).reduce(0) { $0 + a[row][$1] * solved[$1] }) / a[row][row]
+            }
+            return solved
+        }
+        let xs = solve(nodes.map(\.x), offset: \.dx, weight: \.weightX)
+        let ys = solve(nodes.map(\.y), offset: \.dy, weight: \.weightY)
+        nodes = nodes.indices.map { StoreMap.Node(id: nodes[$0].id, name: nodes[$0].name, x: xs[$0], y: ys[$0]) }
+    }
+
+    /// Puts `id` `meters` from `origin`: offset to the side as far as `side.1` is from `side.0`, and
+    /// the rest of the way in the direction from `origin` to `side.0`.
+    mutating func place(_ id: String, from origin: String, meters: Double, alongside side: (String, String)) {
+        guard let node = nodes.firstIndex(where: { $0.id == id }), let o = position(of: origin),
+              let a = position(of: side.0), let b = position(of: side.1) else { return }
+        let length = hypot(a.x - o.x, a.y - o.y)
+        let offset = (x: b.x - a.x, y: b.y - a.y)
+        let along = (max(meters * meters - offset.x * offset.x - offset.y * offset.y, 0)).squareRoot()
+        nodes[node] = StoreMap.Node(id: id, name: nodes[node].name,
+                                    x: o.x + offset.x + (a.x - o.x) / length * along,
+                                    y: o.y + offset.y + (a.y - o.y) / length * along)
     }
 }
