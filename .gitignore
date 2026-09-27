@@ -7,6 +7,8 @@
 
 ## User settings
 xcuserdata/
+# Each developer keeps their own ShellApp project; its scheme holds their API keys.
+ShellApp.xcodeproj/
 
 ## Obj-C/Swift specific
 *.hmap
