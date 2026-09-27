@@ -82,7 +82,7 @@ extension StoreMap {
     /// run up the map, and the aisle numbers grow to the right.
     static let target = target(loading: CalibrationFile.bundled)
 
-    /// Aisles only walked at their ends get a lane this long (measured on aisles 14/15 and 34/35).
+    /// Aisles only walked at their ends get a lane this long (measured on aisles 16/17 and 34/35).
     static let aisleMeters = 12.7
 
     static func target(loading load: (String) -> CalibrationFile?) -> StoreMap {
@@ -94,16 +94,16 @@ extension StoreMap {
         }
         var map = Assembly()
 
-        // The grocery section, as calibrated. Its "Start" is node 1, and "Aisle 1" is aisle 14/15.
+        // The grocery section, as calibrated. Its "Start" is node 1, and "Aisle 1" is aisle 16/17.
         map.add(grocery, placement: Placement(), nodes: [
             "N1": ("1", "Node 1"), "N2": ("2", "Node 2"), "N3": ("3", "Node 3"), "N4": ("4", "Node 4"),
             "N5": ("5", "Node 5"), "N6": ("6", "Node 6"), "N7": ("7", "Node 7"), "N8": ("8", "Node 8"),
             "N9": ("9", "Node 9"), "N10": ("10", "Node 10"),
-            "N11": ("14_15Front", "14/15 Front"), "N12": ("14_15Back", "14/15 Back"),
+            "N11": ("16_17Front", "16/17 Front"), "N12": ("16_17Back", "16/17 Back"),
         ])
 
         // The store walk ran the aisle rows along x instead of y, so it's turned a quarter turn
-        // clockwise. Its two parts are pinned separately, at node 1 and at the front of 14/15, so
+        // clockwise. Its two parts are pinned separately, at node 1 and at the front of 16/17, so
         // the ~80 m walk from the entrance doesn't carry its drift into the aisles.
         map.add(walk, placement: map.placement(of: walk, turning: -.pi / 2, pinning: "N7", to: "1"), nodes: [
             "N1": ("entrance", "Entrance"), "N2": ("turn1", "Turn 1"),
@@ -111,9 +111,10 @@ extension StoreMap {
             "N5": ("checkpoint3", "Checkpoint 3"), "N6": ("checkpoint4", "Checkpoint 4"),
             "N7": ("1", "Node 1"),
         ])
-        // Skipped from this walk: its grocery nodes (the grocery session maps them better) and its
-        // node 1 → 14/15 edge (4.3 m, where the grocery session walked 7.0 m through node 2).
-        map.add(walk, placement: map.placement(of: walk, turning: -.pi / 2, pinning: "N8", to: "14_15Front"), nodes: [
+        // Its "G13" is node 8 (the back of aisle 13's lane). Its other grocery nodes are skipped:
+        // the grocery session maps them better.
+        map.add(walk, placement: map.placement(of: walk, turning: -.pi / 2, pinning: "N9", to: "16_17Front"), nodes: [
+            "N7": ("1", "Node 1"), "N28": ("8", "Node 8"),
             "N8": ("14_15Front", "14/15 Front"), "N9": ("16_17Front", "16/17 Front"),
             "N10": ("18_19Front", "18/19 Front"), "N11": ("22_23Front", "22/23 Front"),
             "N12": ("24_25Front", "24/25 Front"), "N13": ("26_27Front", "26/27 Front"),
@@ -133,16 +134,15 @@ extension StoreMap {
         ])
 
         // Aisles walked only at their ends.
-        for pair in ["16_17", "18_19", "22_23", "24_25", "26_27", "28_29", "30_31"] {
+        for pair in ["14_15", "18_19", "22_23", "24_25", "26_27", "28_29", "30_31"] {
             map.edges.append(Edge(from: "\(pair)Front", to: "\(pair)Back", meters: aisleMeters))
         }
 
         let stops: [String: [Visit]] = [
             "G7": [.stop("1")],
             "G8": [.stop("4")],
-            // TODO: G9 and G10 are assumed (G9 across from G8, G10 on aisle 13's lane). Check in store.
+            // TODO: G9 is assumed to be across from G8. Check in store.
             "G9": [.stop("4")],
-            "G10": [.stop("9")],
             // Whole lanes: the items can be anywhere along them.
             "G13": Visit.lane(["2", "3", "9", "8"]),
             "G6": Visit.lane(["10", "5", "6"]),

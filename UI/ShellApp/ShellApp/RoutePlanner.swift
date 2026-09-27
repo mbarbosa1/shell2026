@@ -7,8 +7,9 @@ import Foundation
 ///    ways (G14 and G15 share a lane) become one group.
 /// 2. Dijkstra gives the walking distance and path between every pair of nodes that matter.
 /// 3. Held-Karp tries every order of groups, and every way of picking each one up, and keeps the
-///    shortest. A visit also collects any other group it passes: driving aisle 13's lane picks up
-///    G10 at node 9 on the way. It's exact, and instant for up to ~15 groups.
+///    shortest. A visit also collects any other group it passes: a lane driven past a node where
+///    another location is scanned picks that one up on the way. It's exact, and instant for up to
+///    ~15 groups.
 ///
 /// Walking back over a node is allowed: some spots are dead ends, and going back out of an aisle
 /// can be shorter than walking through it. Collected items aren't passed in, so re-planning
