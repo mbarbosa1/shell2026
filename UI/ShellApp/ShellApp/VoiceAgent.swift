@@ -261,12 +261,9 @@ final class VoiceAgent {
             let finished = model.finishList(at: Self.text(parameters["store"]), source: .voice)
             return ("Saved list \(finished.number) to History and started list \(model.currentList.number).", false)
 
-        case "open_camera_or_close":
-            if model.isCameraOpen {
-                model.isCameraOpen = false
-                return ("Camera closed.", false)
-            }
-            return ("Camera opened." + Self.notInCatalog(model.startShopping()), false)
+        case "open_camera", "open_camera_or_close":
+            // Only opens: the camera closes at the cashier or with the X on screen.
+            return ("Camera opened. Let's start shopping." + Self.notInCatalog(model.startShopping()), false)
 
         case "analyze_current_frame":
             // No computer vision in the app yet, so say so instead of guessing a direction.
@@ -275,16 +272,11 @@ final class VoiceAgent {
                 : ("The camera is closed. Open it first.", true)
 
         case "cancel_current_operation":
-            let wasOpen = model.isCameraOpen
-            model.isCameraOpen = false
-            return (wasOpen ? "Cancelled and closed the camera." : "Cancelled. Nothing was running.", false)
-
-        case "open_camera":
-            return ("Camera opened." + Self.notInCatalog(model.startShopping()), false)
+            return ("Cancelled.", false)
 
         case "close_camera":
-            model.isCameraOpen = false
-            return ("Camera closed.", false)
+            return ("The camera stays on until you reach the cashier. "
+                + "To leave early, tap the close button in the top right corner.", true)
 
         case "next_page":
             return model.showOnboardingPage(model.onboardingPage + 1)

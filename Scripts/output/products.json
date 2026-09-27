@@ -30,8 +30,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]
@@ -60,8 +59,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 15,
-          "block": "G",
+          "aisle": "G15",
           "floor": "01"
         }
       ]
@@ -90,8 +88,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -121,8 +118,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -151,8 +147,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -181,8 +176,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -218,8 +212,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -248,8 +241,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -284,8 +276,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -320,8 +311,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -349,8 +339,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]
@@ -384,8 +373,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 34,
-          "block": "G",
+          "aisle": "G34",
           "floor": "01"
         }
       ]
@@ -423,8 +411,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -462,8 +449,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 37,
-          "block": "G",
+          "aisle": "G37",
           "floor": "01"
         }
       ]
@@ -499,8 +485,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -538,8 +523,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -570,8 +554,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -604,8 +587,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -633,8 +615,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -663,8 +644,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -691,8 +671,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 32,
-          "block": "G",
+          "aisle": "G32",
           "floor": "01"
         }
       ]
@@ -726,8 +705,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 32,
-          "block": "G",
+          "aisle": "G32",
           "floor": "01"
         }
       ]
@@ -760,8 +738,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 32,
-          "block": "G",
+          "aisle": "G32",
           "floor": "01"
         }
       ]
@@ -789,8 +766,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -825,8 +801,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -855,8 +830,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 15,
-          "block": "G",
+          "aisle": "G15",
           "floor": "01"
         }
       ]
@@ -885,8 +859,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -915,8 +888,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -947,8 +919,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -978,8 +949,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1008,8 +978,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1039,8 +1008,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1070,8 +1038,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1101,8 +1068,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1131,8 +1097,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1161,8 +1126,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         }
       ]
@@ -1190,8 +1154,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1220,8 +1183,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1250,13 +1212,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         }
       ]
@@ -1285,18 +1245,15 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         },
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1326,13 +1283,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         }
       ]
@@ -1363,8 +1318,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1393,13 +1347,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         },
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1428,8 +1380,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1458,18 +1409,15 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         },
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1498,8 +1446,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1528,8 +1475,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1557,8 +1503,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1589,8 +1534,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         }
       ]
@@ -1620,23 +1564,19 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         },
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         },
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -1666,18 +1606,15 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         },
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         }
       ]
@@ -1706,8 +1643,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1736,18 +1672,15 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         },
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         }
       ]
@@ -1775,8 +1708,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1804,18 +1736,15 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         },
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         }
       ]
@@ -1844,8 +1773,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1873,13 +1801,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 9,
-          "block": "G",
+          "aisle": "G9",
           "floor": "01"
         },
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         }
       ]
@@ -1908,8 +1834,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1939,8 +1864,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1968,8 +1892,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -1998,8 +1921,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 7,
-          "block": "G",
+          "aisle": "G7",
           "floor": "01"
         }
       ]
@@ -2028,13 +1950,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         },
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2072,13 +1992,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 40,
-          "block": "G",
+          "aisle": "G40",
           "floor": "01"
         },
         {
-          "aisle": 37,
-          "block": "G",
+          "aisle": "G37",
           "floor": "01"
         }
       ]
@@ -2111,13 +2029,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 71,
-          "block": "F",
+          "aisle": "F71",
           "floor": "01"
         },
         {
-          "aisle": 37,
-          "block": "G",
+          "aisle": "G37",
           "floor": "01"
         }
       ]
@@ -2151,8 +2067,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 37,
-          "block": "G",
+          "aisle": "G37",
           "floor": "01"
         }
       ]
@@ -2179,8 +2094,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2215,8 +2129,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -2253,8 +2166,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 34,
-          "block": "G",
+          "aisle": "G34",
           "floor": "01"
         }
       ]
@@ -2287,8 +2199,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 37,
-          "block": "G",
+          "aisle": "G37",
           "floor": "01"
         }
       ]
@@ -2318,8 +2229,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 15,
-          "block": "G",
+          "aisle": "G15",
           "floor": "01"
         }
       ]
@@ -2349,8 +2259,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]
@@ -2380,8 +2289,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]
@@ -2412,8 +2320,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]
@@ -2440,8 +2347,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2468,8 +2374,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2499,8 +2404,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]
@@ -2530,8 +2434,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]
@@ -2560,8 +2463,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2593,8 +2495,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2625,8 +2526,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2659,8 +2559,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -2691,8 +2590,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 16,
-          "block": "G",
+          "aisle": "G16",
           "floor": "01"
         }
       ]
@@ -2722,8 +2620,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 34,
-          "block": "G",
+          "aisle": "G34",
           "floor": "01"
         }
       ]
@@ -2758,8 +2655,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -2795,8 +2691,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -2831,8 +2726,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -2867,8 +2761,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -2904,8 +2797,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -2940,8 +2832,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -2976,8 +2867,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3013,8 +2903,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3052,8 +2941,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3089,8 +2977,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3125,8 +3012,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3162,8 +3048,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3197,8 +3082,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3227,8 +3111,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3259,8 +3142,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3294,8 +3176,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3333,8 +3214,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 15,
-          "block": "G",
+          "aisle": "G15",
           "floor": "01"
         }
       ]
@@ -3361,8 +3241,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         }
       ]
@@ -3392,8 +3271,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -3424,8 +3302,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3456,8 +3333,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3486,8 +3362,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 15,
-          "block": "G",
+          "aisle": "G15",
           "floor": "01"
         }
       ]
@@ -3516,8 +3391,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -3550,8 +3424,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -3582,8 +3455,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -3614,8 +3486,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 21,
-          "block": "G",
+          "aisle": "G21",
           "floor": "01"
         }
       ]
@@ -3656,13 +3527,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 28,
-          "block": "G",
+          "aisle": "G28",
           "floor": "01"
         },
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -3697,13 +3566,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 28,
-          "block": "G",
+          "aisle": "G28",
           "floor": "01"
         },
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -3745,13 +3612,11 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 28,
-          "block": "G",
+          "aisle": "G28",
           "floor": "01"
         },
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -3789,8 +3654,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 37,
-          "block": "G",
+          "aisle": "G37",
           "floor": "01"
         }
       ]
@@ -3819,8 +3683,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 10,
-          "block": "G",
+          "aisle": "G10",
           "floor": "01"
         }
       ]
@@ -3847,8 +3710,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -3877,8 +3739,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -3912,8 +3773,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 35,
-          "block": "G",
+          "aisle": "G35",
           "floor": "01"
         }
       ]
@@ -3946,8 +3806,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -3979,8 +3838,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -4015,8 +3873,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4050,8 +3907,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4085,8 +3941,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4116,8 +3971,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -4150,8 +4004,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -4182,8 +4035,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4212,8 +4064,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4245,8 +4096,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4276,8 +4126,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4304,8 +4153,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 26,
-          "block": "G",
+          "aisle": "G26",
           "floor": "01"
         }
       ]
@@ -4333,8 +4181,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -4362,8 +4209,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -4407,8 +4253,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 34,
-          "block": "G",
+          "aisle": "G34",
           "floor": "01"
         }
       ]
@@ -4444,8 +4289,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 34,
-          "block": "G",
+          "aisle": "G34",
           "floor": "01"
         }
       ]
@@ -4488,8 +4332,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 34,
-          "block": "G",
+          "aisle": "G34",
           "floor": "01"
         }
       ]
@@ -4518,8 +4361,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 15,
-          "block": "G",
+          "aisle": "G15",
           "floor": "01"
         }
       ]
@@ -4549,8 +4391,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -4579,8 +4420,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 15,
-          "block": "G",
+          "aisle": "G15",
           "floor": "01"
         }
       ]
@@ -4610,8 +4450,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -4640,8 +4479,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 13,
-          "block": "G",
+          "aisle": "G13",
           "floor": "01"
         }
       ]
@@ -4672,8 +4510,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 6,
-          "block": "G",
+          "aisle": "G6",
           "floor": "01"
         }
       ]
@@ -4703,8 +4540,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 27,
-          "block": "G",
+          "aisle": "G27",
           "floor": "01"
         }
       ]
@@ -4735,8 +4571,7 @@
       "soldOut": false,
       "locations": [
         {
-          "aisle": 44,
-          "block": "G",
+          "aisle": "G44",
           "floor": "01"
         }
       ]

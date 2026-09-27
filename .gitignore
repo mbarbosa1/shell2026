@@ -34,6 +34,7 @@ playground.xcworkspace
 # .swiftpm
 
 .build/
+__pycache__/
 
 # CocoaPods
 #
@@ -67,3 +68,6 @@ fastlane/test_output
 
 # Secrets
 .env
+
+# macOS Finder metadata
+.DS_Store

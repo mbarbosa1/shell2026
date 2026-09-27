@@ -11,9 +11,35 @@ struct ProductFileDTO: Decodable {
 
 struct ProductDTO: Decodable {
     struct Location: Decodable {
-        var aisle: Int?
-        var block: String?
+        /// Combined aisle identifier from the scraper, for example "A23".
+        var aisle: String?
         var floor: String?
+
+        // Keep the existing persistence schema compatible with saved catalogs.
+        var block: String? {
+            guard let aisle else { return nil }
+            let prefix = String(aisle.prefix { $0.isLetter })
+            return prefix.isEmpty ? nil : prefix
+        }
+        var aisleNumber: Int? {
+            guard let aisle, let block else { return nil }
+            return Int(aisle.dropFirst(block.count))
+        }
+
+        private enum CodingKeys: String, CodingKey { case aisle, block, floor }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            floor = try values.decodeIfPresent(String.self, forKey: .floor)
+            if let combined = try? values.decode(String.self, forKey: .aisle) {
+                aisle = combined.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let number = try values.decodeIfPresent(Int.self, forKey: .aisle),
+                      let block = try values.decodeIfPresent(String.self, forKey: .block) {
+                aisle = "\(block)\(number)"
+            } else {
+                aisle = nil
+            }
+        }
     }
 
     var tcin: String
@@ -34,8 +60,8 @@ struct ProductDTO: Decodable {
     var soldOut: Bool?
     var locations: [Location]?
 
-    /// True when at least one location has both an aisle and a block.
+    /// True when at least one location has a valid combined aisle identifier.
     var hasLocation: Bool {
-        (locations ?? []).contains { $0.aisle != nil && $0.block != nil }
+        (locations ?? []).contains { $0.aisleNumber != nil && $0.block != nil }
     }
 }

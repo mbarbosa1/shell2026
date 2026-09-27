@@ -40,10 +40,9 @@ Permissions (already set in the target's build settings):
 
 - `NSCameraUsageDescription`: the camera screen.
 
-To run it, open `UI/ShellApp/ShellApp.xcodeproj`, choose an iPhone simulator or your iPhone,
-and press ⌘R. On a physical iPhone, first choose your Apple ID under
-**Signing & Capabilities → Team**. The simulator has no camera, so the camera screen shows
-black there.
+To run it, open `ShellApp.xcodeproj` (repo root), plug in your iPhone, choose it as the run
+destination, and press ⌘R. The first time, choose your Apple ID under
+**Signing & Capabilities → Team**.
 
 ## Product data scripts: `Scripts/` (on `main` / `product_database`)
 

@@ -1,6 +1,6 @@
 # HAR → SwiftData product scripts
 
-Extracts Target product data (including **aisle, block and floor**) from HAR captures of
+Extracts Target product data (including **combined aisle identifiers (such as A23) and floor**) from HAR captures of
 target.com and loads it into SwiftData.
 
 ```
@@ -19,7 +19,16 @@ target.com and loads it into SwiftData.
 
 ## Using it in the app
 
-`ShellApp/ShellApp.xcodeproj` (repo root) already uses these files directly: it compiles
+For database-backed recognition, add the local package at `Scripts/Package.swift`.
+`ProductDatabase` owns persistence and `CatalogIntegration` supplies the recognition
+adapter. Neither depends on ShellApp. See [INTEGRATION.md](INTEGRATION.md) for the
+saved-rule contract, migration checks, and combined camera test. Product names
+remain in the existing `Product` model; its schema is unchanged.
+
+The example below is the existing independent database-browser demo, not the
+recognition integration or the authoritative UI for catalog data.
+
+`ShellApp.xcodeproj` (repo root) already uses these files directly: it compiles
 `SwiftData/*.swift` and bundles `output/products.json`, and re-imports on every launch, so
 running `./run.sh` then rebuilding the app picks up new data. To use them in another project:
 
@@ -69,6 +78,14 @@ product.locations                     // every spot the item is stocked
 
 Notes:
 - Location and stock data are for the store the HAR was captured against (store 1074, Aventura).
-- Products with no aisle/block (out of stock, discontinued, or not sold in store) are left out
-  of `products.json`, and the importer deletes any already in the database. Pass
-  `--include-unlocated` to `extract_har.py` to keep them in the JSON.
+- `run.sh` includes unlocated records. No store ID is needed; use captures from
+  the demo's single store. Direct extractor calls can use `--include-unlocated`.
+- Partial imports preserve product identities, existing names when titles are
+  absent, and existing locations. Missing location data is not a deletion signal.
+  A future explicit reconciliation workflow is needed to retire obsolete locations.
+- `ProductDatabaseStore` manages the single-store catalog and saves recognition
+  UUIDs and activation rules separately from product
+  titles. Stock quantity is not used as the activation membership flag.
+
+Scraped JSON locations use `{"aisle": "A23", "floor": "01"}`. The importer also
+accepts older split aisle/block captures and preserves existing saved locations.

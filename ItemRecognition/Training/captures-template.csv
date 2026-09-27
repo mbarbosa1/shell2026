@@ -1,0 +1,5 @@
+image,split,specimen_id,session_id,lighting,background,notes
+train/IMG_0001.jpg,train,onion-01,2026-10-03-home-a,warm-indoor,counter,yellow onion held in hand
+validation/IMG_0101.jpg,validation,onion-11,2026-10-05-store-b,store-fluorescent,bin,red onions in bin
+test/IMG_0201.jpg,test,onion-21,2026-10-07-store-c,store-fluorescent,cart,white onion in cart
+negatives/IMG_0420.jpg,negative,,2026-10-05-store-b,store-fluorescent,shelf,strawberry cereal box (TCIN 95193579)

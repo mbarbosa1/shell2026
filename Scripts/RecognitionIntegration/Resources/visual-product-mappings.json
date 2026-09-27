@@ -1,0 +1,275 @@
+{
+  "version": 1,
+  "products": [
+    {
+      "tcin": "13474244",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "onion"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "15013944",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "banana"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "85759852",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "banana"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "15014055",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "31167786",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "54579324",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "85787732",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "85787729",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "85787731",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "94601343",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "89213524",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "apple"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "84005885",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "orange"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "87689905",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "orange"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "84004243",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "lime"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "53519961",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "grape"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "85668239",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "grape"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "85667870",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "grape"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "15013622",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "grape"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "85762475",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "strawberry"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "13208903",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "strawberry"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "17296921",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "strawberry"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "94769016",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "avocado"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "88042911",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "avocado"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "54556735",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "carrot"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "54556739",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "carrot"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "13219631",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "cucumber"
+        ],
+        "allowsConfirmation": true
+      }
+    },
+    {
+      "tcin": "94063916",
+      "visual": {
+        "modelID": "mvp.produce.categories.v1",
+        "classIDs": [
+          "cucumber"
+        ],
+        "allowsConfirmation": true
+      }
+    }
+  ]
+}

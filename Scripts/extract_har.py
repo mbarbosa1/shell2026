@@ -2,13 +2,9 @@
 """Extract Target (Redsky API) product data from HAR captures into a JSON
 file that the SwiftData importer (SwiftData/ProductImporter.swift) can load.
 
-Usage:
-    python3 extract_har.py milk.har others.har -o output/products.json
-
 Products are merged by TCIN across every response in every HAR, because
 different endpoints carry different fields: recommendations have images,
 product_summary_with_fulfillment has aisle/block and stock info.
-Only the Python standard library is used.
 """
 
 import argparse
@@ -84,10 +80,15 @@ def normalize(tcin, raw, positions):
     # store_positions repeats the same spot once per response; keep each spot once.
     locations, seen = [], set()
     for pos in positions:
-        key = (pos.get("aisle"), pos.get("block"), pos.get("floor"))
+        block = str(pos.get("block") or "").strip()
+        number = pos.get("aisle")
+        if not block or number is None:
+            continue
+        aisle = f"{block}{number}"
+        key = (aisle, pos.get("floor"))
         if key not in seen:
             seen.add(key)
-            locations.append({"aisle": pos.get("aisle"), "block": pos.get("block"), "floor": pos.get("floor")})
+            locations.append({"aisle": aisle, "floor": pos.get("floor")})
 
     return {
         "tcin": tcin,

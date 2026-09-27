@@ -59,7 +59,7 @@ enum ProductImporter {
     }
 
     @discardableResult
-    static func importProducts(from data: Data, into context: ModelContext) throws -> Result {
+    static func importProducts(from data: Data, into context: ModelContext, save: Bool = true) throws -> Result {
         let file = try JSONDecoder().decode(ProductFileDTO.self, from: data)
 
         let existing = try context.fetch(FetchDescriptor<Product>())
@@ -67,14 +67,8 @@ enum ProductImporter {
         var result = Result()
 
         for dto in file.products {
-            // Only products with an aisle/block location belong in the database.
-            guard dto.hasLocation else {
-                if let stale = byTcin.removeValue(forKey: dto.tcin) {
-                    context.delete(stale)
-                    result.removed += 1
-                }
-                continue
-            }
+            // HARs are partial captures. Missing location data must not delete
+            // products, their stable identity, or manually configured rules.
             let product: Product
             if let found = byTcin[dto.tcin] {
                 product = found
@@ -88,18 +82,12 @@ enum ProductImporter {
             apply(dto, to: product, in: context)
         }
 
-        // Drop anything imported earlier that has no location.
-        for product in byTcin.values where product.locations.isEmpty {
-            context.delete(product)
-            result.removed += 1
-        }
-
-        try context.save()
+        if save { try context.save() }
         return result
     }
 
     private static func apply(_ dto: ProductDTO, to p: Product, in context: ModelContext) {
-        p.title = dto.title ?? dto.tcin
+        if let title = dto.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { p.title = title }
         p.parentTitle = dto.parentTitle
         p.itemType = dto.itemType
         p.itemTypeId = dto.itemTypeId
@@ -117,10 +105,14 @@ enum ProductImporter {
         p.quantityAvailable = dto.quantityAvailable
         p.soldOut = dto.soldOut
 
-        for old in p.locations { context.delete(old) }
-        p.locations = (dto.locations ?? []).compactMap { loc in
-            guard let aisle = loc.aisle, let block = loc.block else { return nil }
-            return StoreLocation(aisle: aisle, block: block, floor: loc.floor ?? "01")
+        // Preserve existing location identities. An incomplete capture is not a
+        // removal instruction; explicit location retirement needs a separate workflow.
+        for loc in dto.locations ?? [] {
+            guard let aisle = loc.aisleNumber, let block = loc.block else { continue }
+            let floor = loc.floor ?? "01"
+            if !p.locations.contains(where: { $0.aisle == aisle && $0.block == block && $0.floor == floor }) {
+                p.locations.append(StoreLocation(aisle: aisle, block: block, floor: floor))
+            }
         }
     }
 

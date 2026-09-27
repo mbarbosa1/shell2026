@@ -44,7 +44,10 @@ final class AppModel {
     var isVoiceConnected = false
     /// True while the first connection is being made, so the listening button can't start a second one.
     var isConnectingVoice = false
-    var isDeviceConnected = true
+    /// True while the ESP32 on the cart is connected over Bluetooth (see `CartBluetooth`).
+    var isDeviceConnected = false
+    /// True while the cart's distance sensor sees something close in front. The watch buzzes the whole time.
+    private(set) var isObstacleAhead = false
     /// The last thing the user said to the voice agent.
     var transcript: String?
     /// What the voice agent last did, e.g. "Oat milk added to your list".
@@ -53,19 +56,45 @@ final class AppModel {
     var voiceError: String?
     /// The most recently added item gets an outline.
     var highlightedItemID: UUID?
+    /// The camera screen is up. Only `startShopping()`, the X (`endShopping()`) and reaching the
+    /// cashier change it.
     var isCameraOpen = false
+    /// The one ARKit session: the camera feed, the tracking navigation walks by, and the frames
+    /// hand guiding reads.
+    let camera: CameraService
+    /// The walk through the store, while one is going (see `NavigationScreen`).
+    private(set) var navigator: RouteNavigator?
+    var isNavigating: Bool {
+        get { navigator != nil }
+        set { if !newValue { stopNavigation() } }
+    }
 
     @ObservationIgnored private let container: ModelContainer
     @ObservationIgnored private var context: ModelContext { container.mainContext }
     @ObservationIgnored private var voice: VoiceAgent?
+    @ObservationIgnored private let narrator = Narrator()
+    @ObservationIgnored private let watch: WatchLink
+    @ObservationIgnored private let cartDevice: CartBluetooth
+    @ObservationIgnored private var obstacleDetector = ObstacleDetector()
+    /// Finds the product on the shelf with the arm and guides the user's hand to it, using the
+    /// camera's ARKit frames.
+    @ObservationIgnored let pickup: PickupGuide
 
     init(container: ModelContainer) {
         self.container = container
         ProductImporter.importIfChanged(into: container.mainContext)
+        let camera = CameraService()
+        let cartDevice = CartBluetooth()
+        let watch = WatchLink()
+        self.camera = camera
+        self.cartDevice = cartDevice
+        self.watch = watch
+        pickup = PickupGuide(arm: ArmController(cart: cartDevice), watch: watch, session: camera.session)
         currentList = Self.openList(in: container.mainContext)
         highlightedItemID = currentList.sortedItems.last?.id
         refresh()
         voice = VoiceAgent(model: self)
+        connectCartDevice()
     }
 
     func toggleCollected(_ id: UUID) {
@@ -98,7 +127,100 @@ final class AppModel {
         confirmation = added.count == 1 ? "\(last.name) added to your list" : "\(added.count) usuals added to your list"
     }
 
-    // SAVVY: Voice agent
+    // MARK: Navigation
+
+    /// What's left on the list, for the route planner.
+    var routeItems: [RoutePlanner.Item] {
+        items.filter { !$0.isCollected }.map { RoutePlanner.Item(name: $0.name, location: $0.location) }
+    }
+
+    /// "Start shopping", from the button or the voice agent. Links anything not matched to the
+    /// catalog yet, so the route knows where it is, and returns the items the store doesn't carry.
+    /// The user is always at the store's starting point, so tracking starts (and is measured from)
+    /// here. The camera stays on until the route reaches the cashier or the user taps the X.
+    @discardableResult
+    func startShopping() -> [GroceryItem] {
+        let notFound = matchUnlinkedItems()
+        guard !isCameraOpen else { return notFound }
+        isCameraOpen = true
+        Task {
+            let tracking = await camera.start()
+            // The X was tapped while the camera permission prompt was up.
+            guard isCameraOpen else {
+                camera.stop()
+                return
+            }
+            // No ARKit (simulator) or no camera permission: walk the route by hand instead.
+            startNavigation(simulated: !tracking)
+        }
+        return notFound
+    }
+
+    /// The X on the camera screen: the user leaves before reaching the cashier.
+    func endShopping() {
+        stopNavigation()
+        closeCamera()
+    }
+
+    /// The route reached the cashier. Doesn't stop the narrator, so the cashier message is heard.
+    private func finishShopping() {
+        UIApplication.shared.isIdleTimerDisabled = false
+        closeCamera()
+    }
+
+    private func closeCamera() {
+        pickup.stop()
+        camera.stop()
+        isCameraOpen = false
+    }
+
+    /// Starts guiding the user through the store. Simulated when asked, or when the phone can't
+    /// run ARKit world tracking (e.g. the simulator).
+    func startNavigation(simulated: Bool = false) {
+        navigator?.stop()
+        let navigator = RouteNavigator(
+            map: .target,
+            simulated: simulated || !PositionTracker.isSupported,
+            session: camera.session,
+            remainingItems: { [weak self] in self?.routeItems ?? [] },
+            announce: { [weak self] text, haptic in self?.announce(text, haptic: haptic) },
+            onFinish: { [weak self] in self?.finishShopping() }
+        )
+        self.navigator = navigator
+        // The phone sits on the cart the whole walk: don't let it lock.
+        UIApplication.shared.isIdleTimerDisabled = true
+        navigator.start()
+        // Started from the route screen rather than "Start shopping": ARKit isn't running yet.
+        // Does nothing when it already is, so tracking isn't reset.
+        if !navigator.isSimulated {
+            Task {
+                _ = await camera.start()
+                if !isNavigating && !isCameraOpen { camera.stop() }
+            }
+        }
+    }
+
+    func stopNavigation() {
+        navigator?.stop()
+        navigator = nil
+        narrator.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
+        // The camera stays on while shopping; it only goes off at the cashier or with the X.
+        if !isCameraOpen { camera.stop() }
+    }
+
+    /// Plays the cue on the watch and says it: through VoiceOver when it's on, so the two
+    /// don't talk over each other, and the narrator otherwise.
+    private func announce(_ text: String, haptic: WatchHaptic?) {
+        watch.send(haptic, text: text)
+        if UIAccessibility.isVoiceOverRunning {
+            UIAccessibility.post(notification: .announcement, argument: text)
+        } else {
+            narrator.speak(text)
+        }
+    }
+
+    // MARK: Voice agent
 
     func setListening(_ isListening: Bool) async {
         // VoiceOver already reads the screen aloud. The agent talking too would make both unusable.
@@ -132,6 +254,7 @@ final class AppModel {
         context.delete(item)
         log(.removed, removedName, source: source)
         save()
+        navigator?.itemsChanged()
         confirmation = "\(removedName) removed from your list"
         return true
     }
@@ -225,15 +348,6 @@ final class AppModel {
         return catalogProducts.first { $0.tcin == tcin }
     }
 
-    /// Links anything not matched yet, then opens the camera. Returns the items the store doesn't carry.
-    /// Called by the Start shopping button and when Mira opens the camera.
-    @discardableResult
-    func startShopping() -> [GroceryItem] {
-        let notFound = matchUnlinkedItems()
-        isCameraOpen = true
-        return notFound
-    }
-
     /// Clears what the item got from its old product, so it can be matched again. Values the
     /// user set themselves (a different brand or aisle than the product's) are kept.
     private func unlink(_ item: GroceryItem) {
@@ -262,6 +376,32 @@ final class AppModel {
     func list(number: Int) -> GroceryList? {
         let descriptor = FetchDescriptor<GroceryList>(predicate: #Predicate { $0.number == number })
         return try? context.fetch(descriptor).first
+    }
+
+    // MARK: Cart device and watch
+
+    private func connectCartDevice() {
+        cartDevice.onConnectionChange = { [weak self] isConnected in
+            guard let self else { return }
+            isDeviceConnected = isConnected
+            // No readings without the cart, so stop the alarm instead of buzzing forever.
+            if !isConnected {
+                obstacleDetector.reset()
+                setObstacleAhead(false)
+            }
+        }
+        cartDevice.onDistance = { [weak self] cm in
+            guard let self, obstacleDetector.update(distanceCm: cm) else { return }
+            setObstacleAhead(obstacleDetector.isObstacleAhead)
+        }
+    }
+
+    private func setObstacleAhead(_ isAhead: Bool) {
+        guard isAhead != isObstacleAhead else { return }
+        isObstacleAhead = isAhead
+        // Watch only, no voice: the alarm buzzes until the path is clear.
+        watch.send(isAhead ? .obstacleOn : .obstacleOff,
+                   text: isAhead ? "Stop. Something is in front of the cart." : "Path clear.")
     }
 
  // MARK: Onboarding
@@ -374,6 +514,7 @@ final class AppModel {
         item.collectedAt = isCollected ? .now : nil
         log(isCollected ? .checkedOff : .unchecked, item.name, source: source)
         save()
+        navigator?.itemsChanged()
     }
 
     private func log(_ kind: ListEvent.Kind, _ itemName: String?, source: ListEvent.Source) {
