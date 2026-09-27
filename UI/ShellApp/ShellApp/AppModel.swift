@@ -58,7 +58,7 @@ final class AppModel {
     /// The most recently added item gets an outline.
     var highlightedItemID: UUID?
     /// The camera screen is up. Only `startShopping()`, the X (`endShopping()`) and reaching the
-    /// cashier change it.
+    /// self checkout change it.
     var isCameraOpen = false
     /// The one ARKit session: the camera feed, the tracking navigation walks by, and the frames
     /// hand guiding reads.
@@ -88,6 +88,11 @@ final class AppModel {
     /// Finds the product on the shelf with the arm and guides the user's hand to it, using the
     /// camera's ARKit frames.
     @ObservationIgnored let pickup: PickupGuide
+    /// The phone's pan/tilt arm on the cart, shared by pickup and the self-checkout finder, which
+    /// never run at the same time.
+    @ObservationIgnored private let arm: ArmController
+    /// After the last item: finds the self-checkout along its row and guides the cart to it.
+    @ObservationIgnored let checkout: CheckoutFinder
 
     init(container: ModelContainer) {
         self.container = container
@@ -95,11 +100,15 @@ final class AppModel {
         let camera = CameraService()
         let cartDevice = CartBluetooth()
         let watch = WatchLink()
+        let arm = ArmController(cart: cartDevice)
+        let range = ProductRangeSession(session: camera.session)
         self.camera = camera
         self.cartDevice = cartDevice
         self.watch = watch
-        pickup = PickupGuide(arm: ArmController(cart: cartDevice), watch: watch, session: camera.session)
-        range = ProductRangeSession(session: camera.session)
+        self.arm = arm
+        self.range = range
+        pickup = PickupGuide(arm: arm, watch: watch, session: camera.session, range: range)
+        checkout = CheckoutFinder(arm: arm, session: camera.session, range: range)
         currentList = Self.openList(in: container.mainContext)
         highlightedItemID = currentList.sortedItems.last?.id
         refresh()
@@ -107,7 +116,10 @@ final class AppModel {
         scanner.announce = { [weak self] text, haptic in self?.announce(text, haptic: haptic) }
         scanner.found = { [weak self] id in self?.putInCart(id) }
         scanner.range = range
+        scanner.pickup = pickup
         scanner.trials = trials
+        pickup.onFinished = { [weak self] outcome in self?.scanner.pickupFinished(outcome) }
+        checkout.announce = { [weak self] text, haptic in self?.announce(text, haptic: haptic) }
         connectCartDevice()
     }
 
@@ -151,7 +163,7 @@ final class AppModel {
     /// "Start shopping", from the button or the voice agent. Links anything not matched to the
     /// catalog yet, so the route knows where it is, and returns the items the store doesn't carry.
     /// The user is always at the store's starting point, so tracking starts (and is measured from)
-    /// here. The camera stays on until the route reaches the cashier or the user taps the X.
+    /// here. The camera stays on until the route reaches the self checkout or the user taps the X.
     @discardableResult
     func startShopping() -> [GroceryItem] {
         let notFound = matchUnlinkedItems()
@@ -170,7 +182,7 @@ final class AppModel {
         return notFound
     }
 
-    /// The X on the camera screen: the user leaves before reaching the cashier (or ends a test scan).
+    /// The X on the camera screen: the user leaves before reaching the self checkout (or ends a test scan).
     func endShopping() {
         stopNavigation()
         endTestScan()
@@ -218,7 +230,8 @@ final class AppModel {
         scanner.end()
     }
 
-    /// The route reached the cashier. Doesn't stop the narrator, so the cashier message is heard.
+    /// The route reached the self checkout, or the end of its row. Doesn't stop the narrator, so the
+    /// last message is heard.
     private func finishShopping() {
         UIApplication.shared.isIdleTimerDisabled = false
         closeCamera()
@@ -226,6 +239,7 @@ final class AppModel {
 
     private func closeCamera() {
         pickup.stop()
+        checkout.stop()
         // Before the pause: turning LiDAR off re-runs the session, which would restart it.
         range.stop()
         camera.stop()
@@ -251,6 +265,14 @@ final class AppModel {
         navigator.onFrame = { [weak self] buffer, time, focusing in
             self?.scanner.receive(buffer, at: time, isAdjustingFocus: focusing)
         }
+        // The last leg, along the self-checkout row: the camera looks for the machines. Only on a
+        // real walk: a simulated one has no camera images.
+        navigator.onCheckoutRow = { [weak self, weak navigator] side in
+            guard let self, let navigator, !navigator.isSimulated else { return }
+            checkout.onSighted = { [weak navigator] in navigator?.checkoutSeen = true }
+            checkout.onReached = { [weak navigator] in navigator?.reachedCheckout() }
+            checkout.start(side: side)
+        }
         self.navigator = navigator
         // The phone sits on the cart the whole walk: don't let it lock.
         UIApplication.shared.isIdleTimerDisabled = true
@@ -268,9 +290,10 @@ final class AppModel {
     func stopNavigation() {
         navigator?.stop()
         navigator = nil
+        checkout.stop()
         narrator.stop()
         UIApplication.shared.isIdleTimerDisabled = false
-        // The camera stays on while shopping; it only goes off at the cashier or with the X.
+        // The camera stays on while shopping; it only goes off at the self checkout or with the X.
         if !isCameraOpen { camera.stop() }
     }
 
@@ -289,7 +312,7 @@ final class AppModel {
         let targets = items.filter { !$0.isCollected && names.contains($0.name) }.compactMap {
             ScanTarget(item: $0, products: catalogProducts, landmark: stop.path[0], windowMeters: window)
         }
-        scanner.begin(targets) { [weak navigator] in
+        scanner.begin(targets, sides: navigator.shelfSides(of: stop)) { [weak navigator] in
             (navigator?.metersIntoStop, navigator?.trackingNote == nil)
         }
     }

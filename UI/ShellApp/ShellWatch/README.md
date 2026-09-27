@@ -11,12 +11,13 @@ WatchConnectivity (`WatchLink`), and this app plays it on the wrist:
 | Start walking | start pattern |
 | Stop, you're at the item's aisle | stop pattern |
 | Wrong way | failure pattern |
-| Reached the cashier | success pattern |
+| Reached the self checkout | success pattern |
 | Something in front of the cart | failure pattern, repeating until it's clear |
 | Product found on the shelf | two clicks |
 | Move your hand left / right | 2 taps / 1 tap, repeating |
 | Move your hand up / down | rising / falling pattern, repeating |
-| Hand is on the product | success pattern twice |
+| Reach further: lined up with the product but short of it (PersonDistance depth) | retry pattern, repeating |
+| Hand is on the product (touching it, by depth) | success pattern twice |
 
 New cues go in `WatchHaptic` on both sides: `ShellApp/WatchLink.swift` and `WatchReceiver.swift`.
 

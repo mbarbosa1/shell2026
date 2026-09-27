@@ -32,6 +32,43 @@ public enum DepthGeometry {
         return (x0...x1, y0...y1)
     }
 
+    /// Depth-map pixels around one point, such as a fingertip: `radius` depth pixels either side,
+    /// clamped to the map. Nil when the point is outside the image.
+    public static func window(around point: CGPoint, radius: Int, imageSize: CGSize, depthWidth: Int, depthHeight: Int)
+        -> (x: ClosedRange<Int>, y: ClosedRange<Int>)? {
+        guard imageSize.width > 0, imageSize.height > 0, depthWidth > 0, depthHeight > 0, radius >= 0,
+              point.x >= 0, point.y >= 0, point.x < imageSize.width, point.y < imageSize.height else { return nil }
+        let cx = Int(point.x * CGFloat(depthWidth) / imageSize.width)
+        let cy = Int(point.y * CGFloat(depthHeight) / imageSize.height)
+        return (max(cx - radius, 0)...min(cx + radius, depthWidth - 1),
+                max(cy - radius, 0)...min(cy + radius, depthHeight - 1))
+    }
+
+    /// The nearest surface among the depths around a fingertip: their 20th percentile. A finger is
+    /// in front of whatever is behind it, and the window around its tip also catches some of that
+    /// background, so the median would read too far. Nil with fewer than `minimumCount` depths.
+    public static func nearestSurface(_ depths: [Float], minimumCount: Int = 3) -> Double? {
+        guard depths.count >= max(minimumCount, 1) else { return nil }
+        let sorted = depths.sorted()
+        return Double(sorted[sorted.count / 5])
+    }
+
+    /// The point seen at `point` (pixels of an image of `imageSize`, top left origin) at camera-plane
+    /// depth `z`, in the pinhole camera's frame: x right, y down, z forward, in meters.
+    public static func cameraPoint(planeDepth z: Double, at point: CGPoint, imageSize: CGSize,
+                                   intrinsics k: CameraIntrinsics) -> SIMD3<Double> {
+        guard k.fx > 0, k.fy > 0, imageSize.width > 0, imageSize.height > 0 else { return SIMD3(0, 0, z) }
+        let u = Double(point.x * k.resolution.width / imageSize.width)
+        let v = Double(point.y * k.resolution.height / imageSize.height)
+        return SIMD3((u - k.cx) / k.fx * z, (v - k.cy) / k.fy * z, z)
+    }
+
+    /// A pinhole-frame point (x right, y down, z forward) in ARKit's camera frame (x right, y up,
+    /// z toward the viewer), ready for `ARCamera.transform`.
+    public static func arkitCameraPoint(_ p: SIMD3<Double>) -> SIMD3<Double> {
+        SIMD3(p.x, -p.y, -p.z)
+    }
+
     /// The median depth, the share of `considered` pixels that gave one, and the spread between
     /// the 25th and 75th percentiles. Nil with no depths.
     public static func summarize(_ depths: [Float], considered: Int)

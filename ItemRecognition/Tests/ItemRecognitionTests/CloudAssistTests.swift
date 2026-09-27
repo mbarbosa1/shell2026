@@ -317,6 +317,81 @@ final class CloudAssistTests: XCTestCase {
         XCTAssertEqual(starts, [0.1, 1.1])
     }
 
+    func testUnlocatedOnionReachesGeminiAfterFiveSeconds() async throws {
+        let cloud = FakeCloud()
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.9), cloud: cloud)
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog,
+            visualClassifier: classifier, visualPolicy: .appleVisionProduce,
+            assessor: FixedAssessment(quality: .notLocated))
+        var question: RecognitionUpdate?
+        for frame in 1...60 {
+            let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
+            if frame < 55 {
+                XCTAssertNil(update.visualObservation, "Rejected local frames must not contribute scores")
+                XCTAssertFalse(update.awaitingVerdict)
+            }
+            if update.awaitingVerdict { question = update; break }
+        }
+        let result = try XCTUnwrap(question)
+        XCTAssertEqual(result.modeNotice, .cloudAssist)
+        XCTAssertEqual(result.visualObservation?.inputRegion, CGRect(x: 0, y: 0, width: 64, height: 48))
+        XCTAssertEqual(result.confirmationCount, 1)
+        XCTAssertEqual(result.requiredConfirmations, 1)
+        XCTAssertNil(result.confirmedObservation, "Cloud labels still need the shopper's verdict")
+        let calls = await cloud.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testMotionAndFocusNeverSendRejectedFramesToGemini() async throws {
+        for quality in [FrameAssessment.Quality.moving, .focusing] {
+            let cloud = FakeCloud()
+            let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.9), cloud: cloud,
+                cloudPolicy: CloudAssistPolicy(appleVisionSeconds: 0))
+            let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog,
+                visualClassifier: classifier, visualPolicy: .appleVisionProduce,
+                assessor: FixedAssessment(quality: quality))
+            for frame in 1...15 {
+                let update = try await session.submit(homeContext, image: image(Double(frame)))
+                XCTAssertNil(update.visualObservation)
+                XCTAssertFalse(update.awaitingVerdict)
+            }
+            let calls = await cloud.calls
+            XCTAssertEqual(calls, 0, quality.rawValue)
+        }
+    }
+
+    func testFailedRecoveryDoesNotConfirmFromRejectedLocalFrame() async throws {
+        let cloud = FakeCloud(error: URLError(.timedOut))
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.99), cloud: cloud,
+            cloudPolicy: CloudAssistPolicy(appleVisionSeconds: 0))
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog,
+            visualClassifier: classifier, visualPolicy: .appleVisionProduce,
+            assessor: FixedAssessment(quality: .notLocated))
+        for frame in 1...30 {
+            let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
+            XCTAssertNil(update.visualObservation)
+            XCTAssertFalse(update.awaitingVerdict)
+        }
+        let usage = await classifier.usage()
+        XCTAssertEqual(usage.calls, 2)
+        XCTAssertNotNil(usage.lastFailure)
+        XCTAssertFalse(usage.isRequestInFlight)
+    }
+
+    func testRecoveryUnknownDoesNotValidateTheTarget() async throws {
+        let classifier = try ProduceCategoryClassifier(base: FakeBase(score: 0.99), cloud: FakeCloud(label: "unknown"),
+            cloudPolicy: CloudAssistPolicy(appleVisionSeconds: 0))
+        let session = try await RecognitionCoordinator(targetID: target, catalog: onionCatalog,
+            visualClassifier: classifier, visualPolicy: .appleVisionProduce,
+            assessor: FixedAssessment(quality: .notLocated))
+        for frame in 1...15 {
+            let update = try await session.submit(homeContext, image: image(Double(frame) / 10))
+            XCTAssertFalse(update.awaitingVerdict)
+        }
+        let accepted = await session.acceptInsight()
+        XCTAssertNil(accepted)
+    }
+
     func testEncoderCropsOrientsAndDownscales() throws {
         let source = image(1, width: 320, height: 240, orientation: .right)
         let data = try CloudImageEncoder.jpeg(source, crop: CGRect(x: 40, y: 30, width: 200, height: 100),
@@ -326,6 +401,13 @@ final class CloudAssistTests: XCTestCase {
         // `.right` rotates the 200×100 stored crop upright to 100×200, then fits 100 px.
         XCTAssertEqual(properties[kCGImagePropertyPixelWidth] as? Int, 50)
         XCTAssertEqual(properties[kCGImagePropertyPixelHeight] as? Int, 100)
+    }
+}
+
+private struct FixedAssessment: FrameAssessing {
+    let quality: FrameAssessment.Quality
+    func assess(_ image: RecognitionImage) -> FrameAssessment {
+        FrameAssessment(objectRegion: nil, quality: quality, continuityLost: true)
     }
 }
 

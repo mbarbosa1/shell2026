@@ -77,6 +77,7 @@ public struct CloudAssistUsage: Sendable, Equatable {
     public let lastFailure: String?
     /// Wall-clock time of the last call.
     public let lastSeconds: TimeInterval?
+    public let isRequestInFlight: Bool
 }
 
 /// Broad MVP produce categories. `base` (Apple Vision now, or a Create ML detector
@@ -120,23 +121,37 @@ public actor ProduceCategoryClassifier: VisualClassifying {
         windowStart = timestamp
     }
 
-    public func usage() -> CloudAssistUsage {
+    public func usage(at timestamp: TimeInterval? = nil) -> CloudAssistUsage {
         let remaining: TimeInterval? = {
-            guard cloud != nil, cloudRequests < callLimit, let windowStart, let latestFrame else { return nil }
-            return max(0, cloudPolicy.appleVisionSeconds - (latestFrame - windowStart))
+            guard cloud != nil, cloudRequests < callLimit, let windowStart,
+                  let now = timestamp ?? latestFrame else { return nil }
+            return max(0, cloudPolicy.appleVisionSeconds - (now - windowStart))
         }()
         return CloudAssistUsage(calls: cloudRequests, limit: cloud == nil ? 0 : callLimit, secondsUntilCall: remaining,
-                                lastLabel: lastLabel, lastFailure: lastFailure, lastSeconds: lastSeconds)
+                                lastLabel: lastLabel, lastFailure: lastFailure, lastSeconds: lastSeconds,
+                                isRequestInFlight: cloudInFlight)
     }
 
     public func classify(in image: RecognitionImage, crop: CGRect?) async throws -> VisualObservation {
         let version = try await version()
+        if let result = try await cloudObservation(in: image, crop: crop, version: version) { return result }
+        return try await localObservation(image: image, crop: crop, version: version,
+            diagnostic: lastFailure.map { "Cloud assist unavailable; using on-device result. \($0)" })
+    }
+
+    public func classifyFallback(in image: RecognitionImage, crop: CGRect?) async throws -> VisualObservation? {
+        // Never substitute local scores from a frame the local assessor rejected.
+        // With no foreground region, Gemini sees the whole frame and can answer unknown.
+        try await cloudObservation(in: image, crop: crop, version: version())
+    }
+
+    private func cloudObservation(in image: RecognitionImage, crop: CGRect?, version: String) async throws -> VisualObservation? {
         let region = crop ?? CGRect(origin: .zero, size: image.imageResolution)
         latestFrame = image.timestamp
         if windowStart == nil { windowStart = image.timestamp }
         guard let cloud, !cloudInFlight, cloudRequests < callLimit, let windowStart,
               image.timestamp - windowStart >= cloudPolicy.appleVisionSeconds else {
-            return try await localObservation(image: image, crop: crop, version: version)
+            return nil
         }
         cloudInFlight = true
         cloudRequests += 1
@@ -159,8 +174,7 @@ public actor ProduceCategoryClassifier: VisualClassifying {
         } catch {
             lastLabel = nil; lastFailure = error.localizedDescription
         }
-        return try await localObservation(image: image, crop: crop, version: version,
-            diagnostic: "Cloud assist unavailable; using on-device result. \(lastFailure ?? "")")
+        return nil
     }
 
     private func localObservation(image: RecognitionImage, crop: CGRect?, version: String,

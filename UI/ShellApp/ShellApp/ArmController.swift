@@ -84,6 +84,17 @@ final class ArmController {
         }
     }
 
+    /// Where to look while driving along a row for something on one side, like the self-checkout
+    /// machines: from ahead of the cart round to square on that side, level and a little higher,
+    /// since their screens and signs are above the cart.
+    func lookoutPoses(facing side: ShelfSide) -> [Pose] {
+        let square = side == .left ? Self.panFacingLeft : Self.panFacingRight
+        let ahead = Self.home.pan
+        return [ahead + (square - ahead) / 2, (ahead + 2 * square) / 3, square].flatMap { pan in
+            [90, 75].map { tilt in Pose(pan: pan, tilt: tilt) }
+        }
+    }
+
     /// Turns one small step toward `box`, the product's position in the frame in Vision
     /// coordinates (0–1, origin at the bottom left).
     ///

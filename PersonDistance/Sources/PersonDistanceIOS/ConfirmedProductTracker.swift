@@ -22,6 +22,8 @@ final class ConfirmedProductTracker: @unchecked Sendable {
         let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
         let start = DepthGeometry.normalizedLowerLeft(box, in: imageSize).intersection(unit)
         request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: start))
+        // Pinned like ItemRecognition's `VisionRevisions.tracking`, so an iOS update can't change it.
+        request.revision = VNTrackObjectRequestRevision2
         request.trackingLevel = .accurate
     }
 

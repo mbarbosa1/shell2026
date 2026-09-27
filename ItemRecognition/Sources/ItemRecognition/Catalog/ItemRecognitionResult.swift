@@ -116,7 +116,7 @@ public struct TemporalConfirmation: Sendable {
     public let maximumGap: TimeInterval
     private var target: UUID?
     private var previousTimestamp: TimeInterval?
-    private var count = 0
+    public private(set) var count = 0
 
     public init(requiredObservations: Int = 3, maximumGap: TimeInterval = 2) {
         self.requiredObservations = max(1, requiredObservations)

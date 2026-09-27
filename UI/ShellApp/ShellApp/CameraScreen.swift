@@ -7,24 +7,41 @@ import SwiftUI
 struct CameraScreen: View {
     @Environment(AppModel.self) private var model
 
+    private var showsTroubleshooting: Bool {
+        #if DEBUG
+        model.trials.isEnabled && model.scanner.isTestScan
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                Color.black.ignoresSafeArea()
 
-            if model.camera.isRunning {
-                CameraPreview(session: model.camera.session)
-                    .ignoresSafeArea()
-            }
-
-            VStack(spacing: 8) {
-                if let question = model.scanner.question {
-                    ScanQuestionCard(question: question)
+                if model.camera.isRunning {
+                    CameraPreview(session: model.camera.session)
+                        .ignoresSafeArea()
                 }
-                ToGetPanel()
-                CartPanel()
+
+                VStack(spacing: 8) {
+                    if showsTroubleshooting {
+                        #if DEBUG
+                        ScanTroubleshootingPanel()
+                            .frame(height: geometry.size.height * 0.58)
+                        #endif
+                    } else {
+                        if let question = model.scanner.question {
+                            ScanQuestionCard(question: question)
+                        }
+                        ToGetPanel()
+                        CartPanel()
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
         }
         // Top left, one under the other: what the camera is looking for, then (Debug builds) the
         // tester bar and the hand-guide test panel.
@@ -33,15 +50,34 @@ struct CameraScreen: View {
                 if let target = model.scanner.target {
                     ScanTargetPill(name: target.name)
                 }
-                if model.range.status == .measuring,
-                   let item = model.items.first(where: { $0.id == model.range.item }) {
-                    ProductRangePill(name: item.name, meters: model.range.sample?.meters)
+                if let item = model.items.first(where: { $0.id == model.range.item }) {
+                    switch model.range.status {
+                    case .measuring:
+                        ProductRangePill(caption: "From camera", name: item.name, meters: model.range.sample?.meters)
+                    case .anchored:
+                        // The user distance, while the hand is guided to it.
+                        ProductRangePill(caption: "Hand to item", name: item.name, meters: model.range.hand?.meters)
+                    default:
+                        EmptyView()
+                    }
+                }
+                // After the last item, along the self-checkout row: which recognizer found it, and
+                // how far it is.
+                switch model.checkout.phase {
+                case .looking:
+                    ProductRangePill(caption: "Looking for", name: "Self checkout", meters: nil)
+                case .guiding:
+                    ProductRangePill(caption: model.checkout.sighting?.source == .appleVision
+                                         ? "Seen by Apple Vision" : "Seen by Gemini",
+                                     name: "Self checkout", meters: model.range.sample?.meters)
+                default:
+                    EmptyView()
                 }
                 #if DEBUG
-                if model.trials.isEnabled, model.scanner.target != nil {
+                if model.trials.isEnabled, model.scanner.target != nil, !showsTroubleshooting {
                     TesterBar()
                 }
-                PickupTestPanel()
+                if !showsTroubleshooting { PickupTestPanel() }
                 #endif
             }
             .padding(.leading, 16)
@@ -90,9 +126,12 @@ private struct ScanTargetPill: View {
     }
 }
 
-/// How far the product the shopper said Yes to is from the phone's camera (PersonDistance), while
-/// it's measured. Read when VoiceOver lands on it, never announced; nothing is decided from it.
+/// PersonDistance's reading for the product the shopper said Yes to: its distance from the camera
+/// while the arm turns onto it, then the fingertip's distance from it while the hand is guided.
+/// Read when VoiceOver lands on it, never announced; the watch gives the guidance.
 private struct ProductRangePill: View {
+    /// "From camera" or "Hand to item".
+    let caption: String
     let name: String
     /// Nil with no valid reading right now.
     let meters: Double?
@@ -105,7 +144,7 @@ private struct ProductRangePill: View {
     var body: some View {
         HStack(alignment: .lastTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("From camera")
+                Text(caption)
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                 Text(name)
@@ -126,7 +165,7 @@ private struct ProductRangePill: View {
         }
         .animation(.snappy, value: figure)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name), distance from the camera")
+        .accessibilityLabel("\(name), \(caption.lowercased())")
         .accessibilityValue(figure.map { "\($0) meters" } ?? "No reading")
     }
 }
@@ -170,8 +209,8 @@ private struct TesterBar: View {
 #endif
 
 #if DEBUG
-/// Debug-only buttons for testing hand guiding before computer vision is connected. In the top-left
-/// column, so they stay clear of the X.
+/// Debug-only buttons for testing hand guiding without recognition, and pickup's state (phase,
+/// advice, and whether it has depth). In the top-left column, so they stay clear of the X.
 private struct PickupTestPanel: View {
     @Environment(AppModel.self) private var model
 
@@ -190,7 +229,8 @@ private struct PickupTestPanel: View {
 
     private func status(_ pickup: PickupGuide) -> String {
         let advice = pickup.advice.map { "\($0)" } ?? "–"
-        return "\(pickup.phase) · \(advice)"
+        let guidance = pickup.phase == .guidingHand ? (pickup.isDepthGuided ? " · depth" : " · 2D") : ""
+        return "\(pickup.phase) · \(advice)\(guidance)"
     }
 }
 #endif

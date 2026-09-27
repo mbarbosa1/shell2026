@@ -1,22 +1,30 @@
 import ARKit
 import CoreGraphics
 import Foundation
+import ItemRecognition
 import Observation
+import PersonDistanceIOS
 
-/// Runs the "find it on the shelf and help the user grab it" part of a stop, in four phases:
+/// Runs the "find it on the shelf and help the user grab it" part of a stop, with `ItemScanner`:
 ///
-/// 1. **Searching:** the arm sweeps the phone across the shelf (`ArmController.sweepPoses`) while
-///    computer vision looks for the product. The vision code reports what it sees by calling
-///    `productSeen(_:)`.
-/// 2. **Centering:** the arm turns in small steps until the product is in the middle of the frame.
-/// 3. **Guiding the hand:** the arm holds still and the watch plays `productFound`. A few times a
-///    second, `HandGuide` finds the user's hand in the camera frame and the watch buzzes which way
-///    to move it.
-/// 4. **Done:** the fingertip has stayed on the product for a moment, and the watch plays success.
+/// 1. **Searching:** the arm sweeps the shelf (`search(sides:)`) while recognition looks for the item.
+/// 2. **Holding:** recognition asks "Is this Oat milk?", and the arm stays where it saw it (`hold()`).
+///    No sweeps again (`resumeSearch()`).
+/// 3. **Centering:** after Yes (`centerOnProduct()`), the arm turns in small steps toward the
+///    product's box, which PersonDistance tracks, until it's in the middle of the frame.
+/// 4. **Guiding the hand:** PersonDistance keeps the product's place (`anchorProduct()`), the arm
+///    holds still, and the watch plays `productFound`. A few times a second, `HandGuide` finds the
+///    fingertip on screen and PersonDistance reads its depth: the watch buzzes left, right, up or
+///    down until the hand is lined up, then "reach further" until it touches the product.
+/// 5. **Done:** the fingertip has touched the product, in depth, for a moment. The watch plays
+///    success and `onFinished(.pickedUp)` checks the item off.
 ///
-/// The arm stays still in phase 3 on purpose: the hand covers the product, so computer vision
-/// would lose it, and a moving phone would move the target the hand is aiming for. Computer vision
-/// should pause while `phase == .guidingHand`.
+/// If the product is lost while centering, `onFinished(.lost)`, and the item is looked for again.
+/// Without a depth reading (no LiDAR, or none valid while centering), hand guiding falls back to
+/// the screen alone (`isDepthGuided` is false), where covering the product counts as on it.
+///
+/// The arm stays still in step 4 on purpose: the hand covers the product, so computer vision
+/// would lose it, and a moving phone would move the target the hand is aiming for.
 ///
 /// Frames come from the app's one ARKit session (`CameraService`), so it only works while
 /// shopping, when that session is running.
@@ -24,14 +32,24 @@ import Observation
 @Observable
 final class PickupGuide {
     enum Phase: Equatable {
-        case idle, searching, centering, guidingHand, done
-        /// The sweep finished without computer vision seeing the product.
-        case notFound
+        case idle, searching, holding, centering, guidingHand, done
+    }
+
+    enum Outcome {
+        /// The fingertip reached the product: it's in the shopper's hand.
+        case pickedUp
+        /// PersonDistance lost the product before the hand could be guided to it.
+        case lost
     }
 
     private(set) var phase: Phase = .idle
     /// The latest hand advice, shown on the camera screen.
     private(set) var advice: HandGuide.Advice?
+    /// True while hand guiding uses the fingertip's depth, false when it has only the screen.
+    private(set) var isDepthGuided = false
+
+    /// Set by `AppModel`: pickup of the item the shopper said Yes to is over.
+    @ObservationIgnored var onFinished: (Outcome) -> Void = { _ in }
 
     /// Which way is up in ARKit's camera image: `.right` with the phone upright on the mount.
     /// Computer vision must use the same, so its boxes line up with the hand's position.
@@ -39,8 +57,13 @@ final class PickupGuide {
 
     // MARK: Tuning
 
-    /// Frames in a row with the product centered before the arm stops and hand guiding starts.
+    /// Checks in a row with the product centered before the arm stops and hand guiding starts.
     private let centeredFramesNeeded = 3
+    /// How often centering reads PersonDistance's box for the product.
+    private let centerCheckInterval: Duration = .milliseconds(150)
+    /// How long a centered product may go without a valid depth reading before hand guiding
+    /// starts without depth.
+    private let anchorWait: Duration = .seconds(3)
     /// Checks in a row with the same advice before the watch changes direction, so one jumpy
     /// frame doesn't flip the buzz back and forth.
     private let sameAdviceFramesNeeded = 2
@@ -48,9 +71,10 @@ final class PickupGuide {
     private let onItemFramesNeeded = 4
     /// With no hand in view this long, the watch stops buzzing an old direction.
     private let noHandTimeout: Duration = .seconds(2)
-    /// How long the arm holds each sweep pose, so computer vision gets a few frames there.
+    /// How long the arm holds each sweep pose, so recognition gets a few frames there.
     private let sweepDwell: Duration = .milliseconds(1200)
-    private let sweepPasses = 2
+    /// How long the arm stays still when recognition half-sees the item, so it can make sure.
+    private let candidateHold: Duration = .seconds(3)
     /// How often the hand is checked. Vision takes ~20 ms per frame.
     private let handCheckInterval: Duration = .milliseconds(120)
 
@@ -59,95 +83,145 @@ final class PickupGuide {
     @ObservationIgnored private let arm: ArmController
     @ObservationIgnored private let watch: WatchLink
     @ObservationIgnored private let session: ARSession
+    @ObservationIgnored private let range: ProductRangeSession
     @ObservationIgnored private let handGuide = HandGuide()
+    @ObservationIgnored private let reachPolicy = HandReachPolicy()
     @ObservationIgnored private let visionQueue = DispatchQueue(label: "shellapp.handguide")
+    /// The sides `search(sides:)` sweeps, for `resumeSearch()`, their poses, and the next one.
+    @ObservationIgnored private var sides: [ArmController.ShelfSide] = []
+    @ObservationIgnored private var poses: [ArmController.Pose] = []
+    @ObservationIgnored private var nextPose = 0
     @ObservationIgnored private var sweep: Task<Void, Never>?
+    @ObservationIgnored private var centering: Task<Void, Never>?
     @ObservationIgnored private var handChecks: Task<Void, Never>?
-    @ObservationIgnored private var centeredFrames = 0
     @ObservationIgnored private var candidate: HandGuide.Advice?
     @ObservationIgnored private var candidateFrames = 0
     @ObservationIgnored private var lastHandSeen = ContinuousClock.now
     /// The hand cue the watch is currently repeating, so it's only sent when it changes.
     @ObservationIgnored private var sentHaptic: WatchHaptic?
 
-    init(arm: ArmController, watch: WatchLink, session: ARSession) {
+    init(arm: ArmController, watch: WatchLink, session: ARSession, range: ProductRangeSession) {
         self.arm = arm
         self.watch = watch
         self.session = session
+        self.range = range
     }
 
     // MARK: Controls
 
-    /// Starts searching the shelf on one side, e.g. from the map's `Visit.side` for this item.
-    func start(shelfSide: ArmController.ShelfSide) {
+    /// Sweeps the shelf on `sides` (left first when both) over and over while recognition looks,
+    /// until `hold()`, `centerOnProduct()` or `stop()`. Does nothing with no sides.
+    func search(sides: [ArmController.ShelfSide]) {
         stop()
+        self.sides = sides
+        guard !sides.isEmpty else { return }
         phase = .searching
-        let poses = arm.sweepPoses(facing: shelfSide)
-        sweep = Task {
-            for _ in 0..<sweepPasses {
-                for pose in poses {
-                    arm.move(to: pose)
-                    try? await Task.sleep(for: sweepDwell)
-                    if Task.isCancelled { return }
-                }
+        poses = sides.flatMap { arm.sweepPoses(facing: $0) }
+        nextPose = 0
+        sweep = sweeping(after: .zero)
+    }
+
+    /// Recognition half-sees the item (a candidate, not yet sure): the arm stays where it is for
+    /// `candidateHold`, then sweeps on from there, unless recognition asks first (`hold()`).
+    func holdBriefly() {
+        guard phase == .searching else { return }
+        sweep?.cancel()
+        sweep = sweeping(after: candidateHold)
+    }
+
+    private func sweeping(after delay: Duration) -> Task<Void, Never> {
+        Task {
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            while !Task.isCancelled && !poses.isEmpty {
+                arm.move(to: poses[nextPose % poses.count])
+                nextPose = (nextPose + 1) % poses.count
+                try? await Task.sleep(for: sweepDwell)
             }
-            phase = .notFound
-            arm.moveHome()
         }
     }
 
-    /// Stops everything and turns off any hand-guide buzzing.
+    /// Recognition is asking about what it sees: the arm stays where it is.
+    func hold() {
+        sweep?.cancel()
+        sweep = nil
+        phase = .holding
+    }
+
+    /// The shopper said No: sweep again.
+    func resumeSearch() {
+        search(sides: sides)
+    }
+
+    /// The shopper said Yes and PersonDistance is measuring the product: turn onto it, keep its
+    /// place, and guide the hand to it.
+    func centerOnProduct() {
+        sweep?.cancel()
+        sweep = nil
+        centering?.cancel()
+        phase = .centering
+        centering = Task {
+            var centeredFrames = 0
+            var centeredSince: ContinuousClock.Instant?
+            while !Task.isCancelled && phase == .centering {
+                guard range.status == .measuring else {
+                    finish(.lost)
+                    return
+                }
+                if let box = Self.visionBox(range.box, in: range.imageSize) {
+                    centeredFrames = arm.center(on: box) ? 0 : centeredFrames + 1
+                    if centeredFrames >= centeredFramesNeeded {
+                        if range.anchorProduct(), let anchor = range.anchor,
+                           let target = Self.visionBox(anchor.box, in: anchor.imageSize) {
+                            startGuidingHand(target: target, usingDepth: true)
+                            return
+                        }
+                        let since = centeredSince ?? .now
+                        centeredSince = since
+                        if ContinuousClock.now - since > anchorWait {
+                            startGuidingHand(target: box, usingDepth: false)
+                            return
+                        }
+                    }
+                }
+                try? await Task.sleep(for: centerCheckInterval)
+            }
+        }
+    }
+
+    /// Stops everything and turns off any hand-guide buzzing. PersonDistance is stopped by its
+    /// owner (`ItemScanner`).
     func stop() {
         sweep?.cancel()
         sweep = nil
+        centering?.cancel()
+        centering = nil
         handChecks?.cancel()
         handChecks = nil
         if phase == .guidingHand { watch.send(.handGuideOff, text: "Hand guide stopped.") }
         phase = .idle
         advice = nil
+        isDepthGuided = false
     }
 
     #if DEBUG
-    /// Tests hand guiding without computer vision: pretends the product is whatever is in the
+    /// Tests hand guiding without recognition or depth: pretends the product is whatever is in the
     /// middle of the frame. Start shopping (so the camera runs), point the phone at something,
     /// and reach for it.
     func testHandGuide() {
         stop()
-        startGuidingHand(target: CGRect(x: 0.35, y: 0.35, width: 0.3, height: 0.3))
+        startGuidingHand(target: CGRect(x: 0.35, y: 0.35, width: 0.3, height: 0.3), usingDepth: false)
     }
     #endif
 
-    // MARK: Input from computer vision
-
-    /// Called by the computer vision code with the product's box (Vision coordinates: 0–1, origin
-    /// at the bottom left, oriented like `frameOrientation`), or nil when it isn't in view.
-    func productSeen(_ box: CGRect?) {
-        guard let box else { return }  // Out of view: keep sweeping, or hold the last step.
-        switch phase {
-        case .searching:
-            sweep?.cancel()
-            sweep = nil
-            phase = .centering
-            centeredFrames = 0
-            center(on: box)
-        case .centering:
-            center(on: box)
-        default:
-            break
-        }
-    }
-
-    private func center(on box: CGRect) {
-        let moved = arm.center(on: box)
-        centeredFrames = moved ? 0 : centeredFrames + 1
-        guard centeredFrames >= centeredFramesNeeded else { return }
-        startGuidingHand(target: box)
-    }
-
     // MARK: Hand guiding
 
-    private func startGuidingHand(target: CGRect) {
+    /// - Parameter target: the product in Vision coordinates (0–1, origin at the bottom left,
+    ///   oriented like `frameOrientation`).
+    private func startGuidingHand(target: CGRect, usingDepth: Bool) {
+        centering?.cancel()
+        centering = nil
         phase = .guidingHand
+        isDepthGuided = usingDepth
         candidate = nil
         candidateFrames = 0
         sentHaptic = nil
@@ -157,25 +231,39 @@ final class PickupGuide {
         // Check the newest camera frame a few times a second until the hand reaches the target.
         handChecks = Task {
             while !Task.isCancelled && phase == .guidingHand {
-                if let frame = session.currentFrame?.capturedImage {
-                    let advice = await checkHand(in: frame, target: target)
+                if let frame = session.currentFrame {
+                    // The fingertip and its depth come from this one frame.
+                    let snapshot = CameraSnapshot(frame)
+                    let sighting = await look(in: snapshot.image, target: target)
                     if Task.isCancelled { return }
-                    apply(advice)
+                    if let advice = decide(sighting, in: snapshot) { apply(advice) }
                 }
                 try? await Task.sleep(for: handCheckInterval)
             }
         }
     }
 
-    /// Runs Vision off the main thread. Only the pixel buffer is kept, not the whole ARFrame,
-    /// since holding frames stalls ARKit's camera.
-    private func checkHand(in frame: CVPixelBuffer, target: CGRect) async -> HandGuide.Advice {
+    /// Runs Vision off the main thread. Only the snapshot's buffers are kept, not the whole
+    /// ARFrame, since holding frames stalls ARKit's camera.
+    private func look(in image: CVPixelBuffer, target: CGRect) async -> HandGuide.Sighting {
         let handGuide = handGuide
         let orientation = Self.frameOrientation
         return await withCheckedContinuation { continuation in
             visionQueue.async {
-                continuation.resume(returning: handGuide.advice(for: frame, orientation: orientation, productBox: target))
+                continuation.resume(returning: handGuide.look(in: image, orientation: orientation, productBox: target))
             }
+        }
+    }
+
+    /// The screen's advice, checked against depth when there is some: over the product on screen
+    /// isn't on it until the fingertip reaches the product's depth. Nil when this frame can't tell.
+    private func decide(_ sighting: HandGuide.Sighting, in snapshot: CameraSnapshot) -> HandGuide.Advice? {
+        guard sighting.advice == .onItem, isDepthGuided else { return sighting.advice }
+        guard let tip = sighting.fingertip, let pixel = Self.imagePoint(tip, in: snapshot.imageSize) else { return nil }
+        switch reachPolicy.reach(range.handSample(at: pixel, in: snapshot), now: snapshot.time) {
+        case .touching: return .onItem
+        case .short: return .reachFurther
+        case .unknown: return nil
         }
     }
 
@@ -208,12 +296,18 @@ final class PickupGuide {
             handChecks?.cancel()
             handChecks = nil
             watch.send(.handOnItem, text: "Got it.")
+            onFinished(.pickedUp)
             return
         }
         let haptic = advice.watchHaptic
         guard haptic != sentHaptic else { return }
         sentHaptic = haptic
         watch.send(haptic, text: Self.text(for: advice))
+    }
+
+    private func finish(_ outcome: Outcome) {
+        stop()
+        onFinished(outcome)
     }
 
     /// What the watch screen shows with each hand cue.
@@ -223,8 +317,31 @@ final class PickupGuide {
         case .right: "Hand right"
         case .up: "Hand up"
         case .down: "Hand down"
+        case .reachFurther: "Reach further"
         case .onItem: "Got it."
         case .noHand: "Reach toward the shelf."
         }
+    }
+
+    // MARK: Coordinates
+
+    /// PersonDistance's box (camera image pixels, top left) in Vision coordinates for
+    /// `frameOrientation`, which the arm and HandGuide use.
+    static func visionBox(_ box: CGRect?, in size: CGSize?) -> CGRect? {
+        guard let box, let size else { return nil }
+        let inside = box.intersection(CGRect(origin: .zero, size: size))
+        guard !inside.isNull else { return nil }
+        return try? VisionRegionOfInterest.normalized(pixelCrop: inside, imageSize: size, orientation: frameOrientation)
+    }
+
+    /// A Vision point (0–1, bottom left, oriented like `frameOrientation`) in camera image pixels
+    /// from the top left, which PersonDistance takes.
+    private static func imagePoint(_ point: CGPoint, in size: CGSize) -> CGPoint? {
+        let side = 0.002
+        let spot = CGRect(x: min(max(point.x - side / 2, 0), 1 - side), y: min(max(point.y - side / 2, 0), 1 - side),
+                          width: side, height: side)
+        guard let pixels = try? VisionRegionOfInterest.pixelCrop(normalizedRegion: spot, imageSize: size,
+                                                                 orientation: frameOrientation) else { return nil }
+        return CGPoint(x: pixels.midX, y: pixels.midY)
     }
 }

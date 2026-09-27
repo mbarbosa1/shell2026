@@ -8,7 +8,7 @@ import simd
 /// `RouteNavigator` also uses positions, to tell which way each turn goes.
 struct StoreMap {
     enum Kind {
-        case start, cashier, walkway, scan
+        case start, walkway, scan
     }
 
     /// Which way the camera looks to scan a shelf, in map directions.
@@ -49,13 +49,23 @@ struct StoreMap {
         }
     }
 
+    /// Where the self-checkout machines are: a stretch driven at the end of every route while the
+    /// camera looks for them (ShellApp's `CheckoutFinder`), and which side of it they're on when
+    /// it's walked in `path` order.
+    struct CheckoutRow {
+        let path: [String]
+        let side: ArmController.ShelfSide
+    }
+
     let nodes: [Node]
     let edges: [Edge]
     /// Store location ("G44", block + aisle, same as `ItemDescribing.location`) → the ways to
     /// pick it up. The planner picks whichever makes the trip shortest.
     let stops: [String: [Visit]]
     let startId: String
-    let cashierId: String
+    /// Where every route ends: the far end of `checkoutRow` when there is one.
+    let checkoutId: String
+    var checkoutRow: CheckoutRow? = nil
 
     func node(_ id: String) -> Node? { nodes.first { $0.id == id } }
 
@@ -76,13 +86,15 @@ extension StoreMap {
     /// - `target-grocery` (calibration_2026-09-26T23-56-11Z): the grocery section again.
     /// - `target-store-walk` (calibration_2026-09-26T20-14-37Z): the entrance to node 1, and the
     ///   front and back ends of aisles 14/15 to 34/35.
-    /// - `target-cashier` (calibration_2026-09-27T00-05-10Z): node 1 to the cashier.
     ///
     /// Every walk in them measures a stretch of the store, and the map is the best fit of all of
-    /// them together (see `Survey`), so another session only makes it better.
+    /// them together (see `Survey`), so another session only makes it better. The fourth session,
+    /// `target-cashier` (node 1 to a "Cashier", 58.86 m, direction not recorded), is no longer used.
     ///
     /// Node 1 is the only way into the grocery section, so every route starts with the same walk
-    /// from the entrance and ends with the same walk to the cashier.
+    /// from the entrance and ends with the same walk back: to Turn 1, then along the 7.48 m from
+    /// Turn 1 to the entrance, where the self-checkout machines are, on the right (user,
+    /// September 27, 2026).
     ///
     /// Drawn like the Target app's map: the back wall on the left, aisle numbers growing up the
     /// map, the entrance at the bottom right.
@@ -92,15 +104,15 @@ extension StoreMap {
     static let aislePairs = stride(from: 14, through: 34, by: 2).map { "\($0)_\($0 + 1)" }
 
     static func target(loading load: (String) -> CalibrationFile?) -> StoreMap {
-        guard let survey = targetSurvey(loading: load), let cashier = load("target-cashier") else {
+        guard let survey = targetSurvey(loading: load) else {
             assertionFailure("The Target calibration files are missing from the app bundle")
-            return StoreMap(nodes: [], edges: [], stops: [:], startId: "entrance", cashierId: "cashier")
+            return StoreMap(nodes: [], edges: [], stops: [:], startId: "entrance", checkoutId: "entrance")
         }
 
         var names = [
             "entrance": "Entrance", "turn1": "Turn 1", "checkpoint1": "Checkpoint 1",
             "checkpoint2": "Checkpoint 2", "checkpoint3": "Checkpoint 3", "checkpoint4": "Checkpoint 4",
-            "44End": "Aisle 44 End", "cashier": "Cashier",
+            "44End": "Aisle 44 End",
         ]
         for n in 1...7 { names["\(n)"] = "Node \(n)" }
         for pair in aislePairs {
@@ -109,16 +121,7 @@ extension StoreMap {
             names["\(pair)Back"] = "\(label) Back"
         }
 
-        var positions = survey.positions
-        // The cashier session doesn't record which way it walked, so the cashier is drawn beside
-        // the walk from the entrance, as far to the side as the entrance is. Only the drawing guesses:
-        // the walked length is measured.
-        let cashierMeters = cashier.edges.first?.lengthMeters ?? 0
-        if let origin = positions["1"], let turn = positions["turn1"], let entrance = positions["entrance"] {
-            let offset = entrance - turn
-            let along = max(cashierMeters * cashierMeters - simd_length_squared(offset), 0).squareRoot()
-            positions["cashier"] = origin + offset + simd_normalize(turn - origin) * along
-        }
+        let positions = survey.positions
 
         // A quarter turn counterclockwise, to match the Target app.
         let nodes = positions.keys.sorted().map { id in
@@ -127,7 +130,6 @@ extension StoreMap {
         }
         // Surveyed edges use the straight line between their fitted ends (`length(of:)`).
         let edges = survey.edges.map { Edge(from: $0.from, to: $0.to) }
-            + [Edge(from: "1", to: "cashier", meters: cashierMeters)]
 
         var stops: [String: [Visit]] = [
             "G7": [.stop("1")],
@@ -151,13 +153,13 @@ extension StoreMap {
             var node = node
             node.kind = switch node.id {
             case "entrance": .start
-            case "cashier": .cashier
             case _ where scanNodes.contains(node.id): .scan
             default: .walkway
             }
             return node
         }
-        return StoreMap(nodes: kinds, edges: edges, stops: stops, startId: "entrance", cashierId: "cashier")
+        return StoreMap(nodes: kinds, edges: edges, stops: stops, startId: "entrance", checkoutId: "entrance",
+                        checkoutRow: CheckoutRow(path: ["turn1", "entrance"], side: .right))
     }
 
     /// The fitted survey of every Target session but the cashier's, before it's turned to match the

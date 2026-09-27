@@ -1,6 +1,6 @@
 import Foundation
 
-/// Plans the shortest walk from a starting node, past every item on the list, to the cashier.
+/// Plans the shortest walk from a starting node, past every item on the list, to the self checkout.
 ///
 /// 1. Each item's location ("G44") is looked up on the map: the ways it can be picked up, either
 ///    a stop at one node or a lane driven end to end while scanning. Locations picked up the same
@@ -41,7 +41,7 @@ struct RoutePlanner {
     struct Plan {
         /// Pick-up stops, in walking order.
         let stops: [Stop]
-        /// Every node walked through, from the start node to the cashier.
+        /// Every node walked through, from the start node to the self checkout (`StoreMap.checkoutId`).
         let path: [String]
         let meters: Double
         /// Items with no location yet.
@@ -97,7 +97,7 @@ struct RoutePlanner {
             zip(candidate.path, candidate.path.dropFirst()).reduce(0.0) { $0 + distance($1.0, $1.1) }
         }
 
-        let costs = Costs(start: startId, cashier: map.cashierId, candidates: candidates,
+        let costs = Costs(start: startId, cashier: map.checkoutId, candidates: candidates,
                           covers: covers, driven: driven, distance: distance)
         let order = groups.count <= Self.maxExactGroups ? costs.exactOrder(groups: groups.count)
                                                         : costs.nearestOrder(groups: groups.count)
@@ -129,7 +129,7 @@ struct RoutePlanner {
             }
             stops.append(Stop(id: stops.count, path: lane, scans: scans))
         }
-        if !order.isEmpty || groups.isEmpty { walk(to: map.cashierId) }
+        if !order.isEmpty || groups.isEmpty { walk(to: map.checkoutId) }
 
         return Plan(stops: stops, path: path, meters: meters, unlocated: unlocated, unmapped: unmapped)
     }

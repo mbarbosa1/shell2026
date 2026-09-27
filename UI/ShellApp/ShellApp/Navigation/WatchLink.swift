@@ -13,6 +13,9 @@ enum WatchHaptic: String {
     case productFound
     /// Hand guiding: the watch repeats the direction until the next cue, `handOnItem` or `handGuideOff`.
     case handLeft, handRight, handUp, handDown, handOnItem, handGuideOff
+    /// Hand guiding: lined up with the product but short of it (PersonDistance's hand-to-product
+    /// depth). Repeats like the directions.
+    case handForward
 }
 
 /// Sends navigation cues to the watch app. Live messages only: a turn that arrives late is worse

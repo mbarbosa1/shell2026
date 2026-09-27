@@ -155,3 +155,82 @@ final class MeasurementGateTests: XCTestCase {
         XCTAssertNil(gate.item)
     }
 }
+
+final class HandGeometryTests: XCTestCase {
+    private let image = CGSize(width: 1920, height: 1440)
+
+    func testWindowAroundAPointIsInDepthPixels() throws {
+        // 7.5 image pixels per depth pixel: (960, 720) is depth pixel (128, 96).
+        let window = try XCTUnwrap(DepthGeometry.window(around: CGPoint(x: 960, y: 720), radius: 2,
+                                                        imageSize: image, depthWidth: 256, depthHeight: 192))
+        XCTAssertEqual(window.x, 126...130)
+        XCTAssertEqual(window.y, 94...98)
+    }
+
+    func testWindowAroundAPointIsClampedAtTheEdge() throws {
+        let window = try XCTUnwrap(DepthGeometry.window(around: CGPoint(x: 1, y: 1), radius: 2,
+                                                        imageSize: image, depthWidth: 256, depthHeight: 192))
+        XCTAssertEqual(window.x, 0...2)
+        XCTAssertEqual(window.y, 0...2)
+    }
+
+    func testWindowAroundAPointOutsideTheImageIsNil() {
+        XCTAssertNil(DepthGeometry.window(around: CGPoint(x: 1920, y: 10), radius: 2,
+                                          imageSize: image, depthWidth: 256, depthHeight: 192))
+    }
+
+    func testNearestSurfaceIgnoresTheBackgroundBehindAFinger() throws {
+        // Three finger pixels at 0.60 m and six shelf pixels at 0.90 m.
+        let depths: [Float] = [0.9, 0.6, 0.9, 0.9, 0.61, 0.9, 0.9, 0.6, 0.9]
+        XCTAssertEqual(try XCTUnwrap(DepthGeometry.nearestSurface(depths)), 0.6, accuracy: 1e-6)
+    }
+
+    func testNearestSurfaceNeedsEnoughDepths() {
+        XCTAssertNil(DepthGeometry.nearestSurface([0.6, 0.6]))
+    }
+
+    func testCameraPointAtTheOpticalCentreIsStraightAhead() {
+        let k = CameraIntrinsics(fx: 1500, fy: 1500, cx: 960, cy: 720, resolution: image)
+        XCTAssertEqual(DepthGeometry.cameraPoint(planeDepth: 0.8, at: CGPoint(x: 960, y: 720), imageSize: image, intrinsics: k),
+                       SIMD3(0, 0, 0.8))
+    }
+
+    func testCameraPointRightAndBelowTheCentre() {
+        // 300 px right and 150 px down at 1 m, focal length 1500 px: 0.2 m right, 0.1 m down.
+        let k = CameraIntrinsics(fx: 1500, fy: 1500, cx: 960, cy: 720, resolution: image)
+        let p = DepthGeometry.cameraPoint(planeDepth: 1, at: CGPoint(x: 1260, y: 870), imageSize: image, intrinsics: k)
+        XCTAssertEqual(p.x, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(p.y, 0.1, accuracy: 1e-9)
+        XCTAssertEqual(p.z, 1, accuracy: 1e-9)
+    }
+
+    func testARKitCameraFrameHasYUpAndZTowardTheViewer() {
+        XCTAssertEqual(DepthGeometry.arkitCameraPoint(SIMD3(0.2, 0.1, 1)), SIMD3(0.2, -0.1, -1))
+    }
+}
+
+final class HandReachPolicyTests: XCTestCase {
+    private let policy = HandReachPolicy()
+
+    private func sample(gap: Double, at time: TimeInterval = 5) -> HandSample {
+        HandSample(meters: abs(gap), gap: gap, frameTime: time)
+    }
+
+    func testAtTheProductsDepthIsTouching() {
+        XCTAssertEqual(policy.reach(sample(gap: 0.02), now: 5.1), .touching)
+    }
+
+    func testHoveringInFrontOfTheProductIsShort() {
+        // Covers the product on screen, 15 cm in front of it: not "got it".
+        XCTAssertEqual(policy.reach(sample(gap: 0.15), now: 5.1), .short)
+    }
+
+    func testAFingertipReadingBehindTheProductIsUnknown() {
+        XCTAssertEqual(policy.reach(sample(gap: -0.2), now: 5.1), .unknown)
+    }
+
+    func testNoSampleOrAnOldOneIsUnknown() {
+        XCTAssertEqual(policy.reach(nil, now: 5), .unknown)
+        XCTAssertEqual(policy.reach(sample(gap: 0.01, at: 4), now: 5), .unknown)
+    }
+}
