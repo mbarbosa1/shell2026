@@ -14,6 +14,9 @@ final class VoiceAgent {
     private unowned let model: AppModel
     private var conversation: Conversation?
     private var subscriptions: Set<AnyCancellable> = []
+    /// Whether the microphone should be on. Applied once connected, so a change made while
+    /// connecting isn't lost.
+    private var wantsMicrophone = true
 
     init(model: AppModel) {
         self.model = model
@@ -63,6 +66,10 @@ final class VoiceAgent {
             conversation.$isMuted
                 .sink { [weak self] isMuted in self?.model.isListening = !isMuted }
                 .store(in: &subscriptions)
+            // Shopping connects with the mic off (see `setMicrophone(on:)`).
+            if conversation.isMuted == wantsMicrophone {
+                try await conversation.setMuted(!wantsMicrophone)
+            }
         } catch {
             model.voiceError = error.localizedDescription
         }
@@ -73,14 +80,31 @@ final class VoiceAgent {
         didDisconnect()
     }
 
-    /// Turning listening on connects to Mira. Turning it off ends the conversation, so she stops
-    /// talking right away; muting only the microphone would let her keep speaking (and keep the
-    /// session billing). The list lives in the database, so nothing is lost between sessions.
+    /// Turning listening on connects to Mira, or turns her mic back on if she's connected with it
+    /// off. Turning it off ends the conversation, so she stops talking right away; muting only the
+    /// microphone would let her keep speaking (and keep the session billing). The list lives in the
+    /// database, so nothing is lost between sessions.
     func setListening(_ isListening: Bool) async {
         if isListening {
-            await start()
+            await setMicrophone(on: true)
         } else {
             await stop()
+        }
+    }
+
+    /// Turns only the microphone on or off: Mira stays connected and can still talk. Connects
+    /// first if she isn't yet. Used while shopping, where she only listens at a stop.
+    func setMicrophone(on: Bool) async {
+        wantsMicrophone = on
+        guard let conversation else {
+            await start()
+            return
+        }
+        guard conversation.isMuted == on else { return }
+        do {
+            try await conversation.setMuted(!on)
+        } catch {
+            model.voiceError = error.localizedDescription
         }
     }
 

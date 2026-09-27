@@ -85,18 +85,45 @@ struct CameraScreen: View {
             .padding(.trailing, 80)
         }
         .overlay(alignment: .topTrailing) {
-            Button { model.endShopping() } label: {
-                Image(systemName: "xmark")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-                    .background(.black.opacity(0.6), in: Circle())
+            VStack(spacing: 12) {
+                Button { model.endShopping() } label: {
+                    Image(systemName: "xmark")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                        .background(.black.opacity(0.6), in: Circle())
+                }
+                .accessibilityLabel("Close camera")
+                .accessibilityHint("Stops shopping directions and closes the camera")
+
+                MicrophoneButton()
             }
             .padding(.trailing, 16)
-            .accessibilityLabel("Close camera")
-            .accessibilityHint("Stops shopping directions and closes the camera")
         }
         .accessibilityAction(.escape) { model.endShopping() }
+    }
+}
+
+/// Turns Mira's mic on or off. Shopping also turns it on at each stop and off while walking.
+/// Lavender while she's listening.
+private struct MicrophoneButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let isOn = model.isListening
+        Button {
+            Task { await model.setMicrophone(on: !isOn) }
+        } label: {
+            Image(systemName: isOn ? "mic.fill" : "mic.slash.fill")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(isOn ? Theme.background : .white)
+                .frame(width: 56, height: 56)
+                .background(isOn ? Theme.lavender : Color.black.opacity(0.6), in: Circle())
+        }
+        .disabled(model.isConnectingVoice)
+        .accessibilityLabel("Listening")
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityHint(isOn ? "Turns Mira's microphone off" : "Turns Mira's microphone on")
     }
 }
 
