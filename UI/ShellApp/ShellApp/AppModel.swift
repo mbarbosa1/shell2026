@@ -61,6 +61,10 @@ final class AppModel {
     let camera = CameraService()
     /// Looks for the list's items with the camera at each stop.
     let scanner = ItemScanner()
+    /// Baseline trials, in Debug builds with tester mode on (see the Trials screen).
+    let trials = TrialRecorder()
+    /// Camera images for a tester's test scan, which runs without navigation.
+    @ObservationIgnored private var testScanTracker: PositionTracker?
     /// The walk through the store, while one is going (see `NavigationScreen`).
     private(set) var navigator: RouteNavigator?
     var isNavigating: Bool {
@@ -84,6 +88,7 @@ final class AppModel {
         scanner.announce = { [weak self] text, haptic in self?.announce(text, haptic: haptic) }
         scanner.found = { [weak self] id in self?.putInCart(id) }
         scanner.depth = ProductDepthEstimator(session: camera.session)
+        scanner.trials = trials
     }
 
     func toggleCollected(_ id: UUID) {
@@ -145,10 +150,52 @@ final class AppModel {
         return notFound
     }
 
-    /// The X on the camera screen: the user leaves before reaching the cashier.
+    /// The X on the camera screen: the user leaves before reaching the cashier (or ends a test scan).
     func endShopping() {
         stopNavigation()
+        endTestScan()
         closeCamera()
+    }
+
+    // MARK: Test scans (tester mode)
+
+    /// Tester mode: scans one list item right away, with detection on from the start, without
+    /// walking to it. Measures recognition only; a Yes records the trial and leaves the list alone.
+    /// Needs a phone: returns why not when it can't start.
+    func startTestScan(_ item: GroceryItem) -> String? {
+        guard trials.isEnabled, !isCameraOpen else { return nil }
+        guard let target = ScanTarget(item: item, products: catalogProducts, landmark: "test-scan",
+                                      windowMeters: ItemScanner.margin) else {
+            return "\(item.name) isn't linked to a catalog product."
+        }
+        isCameraOpen = true
+        Task {
+            guard await camera.start() else {
+                closeCamera()
+                return
+            }
+            // The X was tapped while the camera permission prompt was up.
+            guard isCameraOpen else {
+                camera.stop()
+                return
+            }
+            let tracker = PositionTracker(session: camera.session)
+            tracker.onFrame = { [weak self] buffer, time, focusing in
+                self?.scanner.receive(buffer, at: time, isAdjustingFocus: focusing)
+            }
+            tracker.start()
+            testScanTracker = tracker
+            // Standing at the reference node the whole time, so detection stays on.
+            scanner.begin([target], mode: .testScan) { (0, true) }
+        }
+        return nil
+    }
+
+    private func endTestScan() {
+        guard let tracker = testScanTracker else { return }
+        tracker.stop()
+        testScanTracker = nil
+        scanner.end()
     }
 
     /// The route reached the cashier. Doesn't stop the narrator, so the cashier message is heard.

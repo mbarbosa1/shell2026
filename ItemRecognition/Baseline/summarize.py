@@ -19,10 +19,14 @@ def main(path):
     targets = [r for r in rows if r["kind"] == "target"]
     others = [r for r in rows if r["kind"] != "target"]
 
-    setups = Counter((r["device"], r["path"], r["coverage_threshold"], r["produce_threshold"]) for r in rows)
+    # Files from before the app/trial_mode/vision_revisions/language_correction columns read as "-".
+    setups = Counter((r["device"], r["path"], r["coverage_threshold"], r["produce_threshold"],
+                      r.get("app") or "-", r.get("trial_mode") or "-", r.get("language_correction") or "-",
+                      r.get("vision_revisions") or "-") for r in rows)
     print(f"{len(rows)} trials from {path}")
-    for (device, route, coverage, produce), count in sorted(setups.items()):
-        print(f"  {count} on {device} · {route} · coverage {coverage} · produce {produce}")
+    for (device, route, coverage, produce, app, mode, correction, revisions), count in sorted(setups.items()):
+        print(f"  {count} on {device} · {app} {mode} · {route} · coverage {coverage} · produce {produce}"
+              f" · correction {correction} · Vision {revisions}")
 
     print("\nCorrect by kind")
     for kind in ("target", "lookalike", "negative"):

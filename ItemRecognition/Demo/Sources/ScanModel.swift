@@ -174,8 +174,9 @@ final class ScanModel: ObservableObject {
             appliedSession = session
             if baseline.recording {
                 let path = item.recognizesByAppearance ? (configuration.usesGemini ? "gemini" : "appleVision") : "ocr"
-                trial = BaselineTrial(setup: baseline.setup, item: item, listEntry: listEntry, path: path,
-                                      coverage: session.matchCoverage, produceScore: session.produceScore)
+                trial = BaselineTrial(setup: baseline.setup, targetTCIN: item.tcin, targetTitle: item.title,
+                                      listEntry: listEntry, path: path, coverage: session.matchCoverage,
+                                      produceScore: session.produceScore, app: "demo", mode: "demo")
             }
             capture.start(coordinator: coordinator, context: context(calibration.live))
             print("[ItemRecognition] Scan \(item.title) | list \"\(listEntry)\" | window \(session.activateAfterMeters)–\(session.deactivateAfterMeters) m after \(session.landmarkID) | coverage \(session.matchCoverage) | produce \(session.produceScore)")
@@ -281,7 +282,8 @@ final class ScanModel: ObservableObject {
         let repeated = update.awaitingVerdict && awaitingVerdict
         if update.awaitingVerdict && !repeated { trial?.asked(update.result?.matchLevel) }
         if !repeated {
-            trial?.record(update, neighbor: DemoItem.named(update.result?.leadingItemID ?? update.result?.matchedItemID))
+            let neighbor = DemoItem.named(update.result?.leadingItemID ?? update.result?.matchedItemID)
+            trial?.record(update, neighbor: neighbor.flatMap { $0.id == item.id ? nil : $0.title })
         } else if update.advanceNotice != nil {
             trial?.timedOut = true
         }

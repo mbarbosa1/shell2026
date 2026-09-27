@@ -38,9 +38,11 @@ final class ItemScanner {
     @ObservationIgnored var found: (UUID) -> Void = { _ in }
     /// Measures `objectMeters`. Set by `AppModel`.
     @ObservationIgnored var depth: ProductDepthEstimator?
-    /// Whether OCR corrects words toward the dictionary. It can respell brands (Cheez-It), so the
-    /// baseline tries both. Applies from the next item.
-    @ObservationIgnored var languageCorrection = true
+    /// Baseline trials in tester mode: every item scan is one. It also holds the OCR language
+    /// correction setting the next item uses. Set by `AppModel`.
+    @ObservationIgnored var trials: TrialRecorder?
+    /// A real walk, or a tester's test scan (which never touches the list).
+    @ObservationIgnored private var mode = TrialRecorder.Mode.walk
     @ObservationIgnored private var queue: [ScanTarget] = []
     /// Meters past the reference node, or nil before it; and whether tracking can be trusted.
     @ObservationIgnored private var progress: () -> (meters: Double?, reliable: Bool) = { (nil, false) }
@@ -53,10 +55,24 @@ final class ItemScanner {
     @ObservationIgnored private var spokenAt: TimeInterval = -.infinity
     @ObservationIgnored private var toldToMoveOn = false
 
-    /// Starts looking for `targets` at the stop just reached.
-    func begin(_ targets: [ScanTarget], progress: @escaping () -> (meters: Double?, reliable: Bool)) {
+    /// Starts looking for `targets`: at the stop just reached on a walk, or right away for a test scan.
+    func begin(_ targets: [ScanTarget], mode: TrialRecorder.Mode = .walk,
+               progress: @escaping () -> (meters: Double?, reliable: Bool)) {
         queue = targets
+        self.mode = mode
         self.progress = progress
+        next(announcing: false)
+    }
+
+    /// Tester bar: saves the trial in progress and stops looking for this item until `restartTarget()`.
+    func stopTrial() {
+        stopTarget()
+    }
+
+    /// Tester bar: looks for the same item again, as a new trial.
+    func restartTarget() {
+        guard let target else { return }
+        queue.insert(target, at: 0)
         next(announcing: false)
     }
 
@@ -80,9 +96,12 @@ final class ItemScanner {
         guard question != nil, let target, let coordinator else { return }
         question = nil
         if yes {
+            trials?.finish(.accepted)
             Task { await coordinator.acceptInsight() }
-            found(target.listItemID)
+            // A test scan only measures recognition; the list stays as it is.
+            if mode == .testScan { stopTarget() } else { found(target.listItemID) }
         } else {
+            trials?.rejected()
             Task { await coordinator.rejectInsight() }
             announce("Okay, still looking for \(target.name).", nil)
         }
@@ -111,6 +130,7 @@ final class ItemScanner {
                 update = try await coordinator.submit(context, image: image)
             } catch {
                 print("📷 Recognition failed for \(target.name): \(error.localizedDescription)")
+                if run == self.run { trials?.finish(.error) }
                 return
             }
             guard run == self.run else { return }
@@ -131,7 +151,7 @@ final class ItemScanner {
         // The navigator already named the stop's items on arrival.
         if announcing { announce("Now looking for \(target.name).", nil) }
         let run = run
-        let correction = languageCorrection
+        let correction = trials?.usesLanguageCorrection ?? true
         Task {
             do {
                 // Produce: Apple Vision first, then Gemini when a proxy is set (CloudAssistConfig).
@@ -146,6 +166,7 @@ final class ItemScanner {
                     return
                 }
                 self.coordinator = coordinator
+                trials?.begin(target, mode: mode)
             } catch {
                 print("📷 Can't look for \(target.name): \(error.localizedDescription)")
                 guard run == self.run else { return }
@@ -154,7 +175,16 @@ final class ItemScanner {
         }
     }
 
+    /// The title of another product that outscored the target on this frame, for trial records.
+    private func neighbor(in update: RecognitionUpdate) -> String? {
+        guard let target, let id = update.result?.leadingItemID ?? update.result?.matchedItemID,
+              id != target.catalog.targetID else { return nil }
+        return target.catalog.candidates.first { $0.id == id }?.displayName
+    }
+
     private func stopTarget() {
+        // Leaving the item any way but Yes: after the one-minute notice it counts as timed out.
+        trials?.finish(.stopped)
         run += 1
         if let coordinator { Task { await coordinator.stop() } }
         coordinator = nil
@@ -167,8 +197,15 @@ final class ItemScanner {
     }
 
     private func handle(_ update: RecognitionUpdate, at time: TimeInterval, imageSize: CGSize) {
+        // A settled answer repeats on every frame until answered: one question, one recorded frame.
+        if update.awaitingVerdict && question != nil {
+            if update.advanceNotice != nil { trials?.timedOut() }
+        } else {
+            trials?.record(update, neighbor: neighbor(in: update))
+        }
         if update.awaitingVerdict {
             guard question == nil, let prompt = update.verdictPrompt else { return }
+            trials?.asked(update.result?.matchLevel)
             question = prompt
             hint = nil
             announce(prompt, .arrived)

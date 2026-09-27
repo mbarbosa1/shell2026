@@ -34,6 +34,16 @@ struct CameraScreen: View {
                     .padding(.trailing, 80)
             }
         }
+        #if DEBUG
+        .overlay(alignment: .top) {
+            if model.trials.isEnabled, model.scanner.target != nil {
+                TesterBar()
+                    .padding(.horizontal, 16)
+                    // Below the "Looking for" pill and the X.
+                    .padding(.top, 64)
+            }
+        }
+        #endif
         .overlay(alignment: .topTrailing) {
             Button { model.endShopping() } label: {
                 Image(systemName: "xmark")
@@ -91,6 +101,44 @@ private struct ScanTargetPill: View {
         .accessibilityValue(figure.map { "\($0) meters away" } ?? "No object in view")
     }
 }
+
+#if DEBUG
+/// Tester mode (Debug builds): the trial in progress, and Stop to save it; after that, New trial
+/// looks for the same item again. Shoppers never see it.
+private struct TesterBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let trial = model.trials.current
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(trial.map { "Trial · \($0.setup.kind.rawValue) · asked \($0.asks)" } ?? "No trial running")
+                    .font(.subheadline.weight(.semibold))
+                if let summary = model.trials.lastSummary {
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            if trial != nil {
+                Button("Stop") { model.scanner.stopTrial() }
+            } else {
+                Button("New trial") { model.scanner.restartTarget() }
+            }
+        }
+        .buttonStyle(.bordered)
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(.orange.opacity(0.6))
+        }
+    }
+}
+#endif
 
 /// The camera found what looks like the item: yes puts it in the cart, no keeps looking.
 /// The question is also spoken, and can be answered by voice.

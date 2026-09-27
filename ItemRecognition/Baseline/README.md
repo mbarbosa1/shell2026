@@ -16,6 +16,22 @@ A question on a lookalike or negative trial is a **false ask**. Answer **No** (t
 
 ## Setup
 
+The baseline that counts toward "complete" is recorded in **ShellApp**, the product, on its ARKit camera path. The Demo writes the same CSV and stays useful for calibration experiments; compare the two only by the `app` column.
+
+### ShellApp (the product)
+
+1. Run ShellApp from Xcode (a Debug build) on the phone. In the iPhone **Settings** app, open ShellApp and turn on **Tester mode**. A **Trials** button appears on the Shop screen.
+2. Put the items to test on the list (by voice or in the app) so each is linked to a catalog product.
+3. Decide the Gemini proxy once per session: set `CLOUD_PROXY_URL` and `CLOUD_PROXY_TOKEN` in the scheme's environment variables, or leave them unset for the on-device baseline.
+4. On **Trials**, set what will be in view and the conditions, and **OCR language correction**. Run the label items once with it on and once off.
+5. Start a trial either way:
+   - **Test scan** (Phase 1, recognition only): tap an item under *Test scan an item*. The camera opens and scans at once, with detection on. **Yes** saves the trial and leaves the list alone.
+   - **Real walk** (activation included): **Start shopping** and walk the route. Every stop's item scan is a trial with the setup you declared.
+6. The orange tester bar on the camera screen shows the trial. **Stop** saves it; **New trial** scans the same item again. Leaving the item (Yes, the X, a skipped stop, a check-off by voice) saves it too.
+7. Export from **Trials** → *Export … trials (CSV)*.
+
+### Demo
+
 1. Build `ItemRecognition/Demo` to the phone (see `../Demo/README.md`). Record the phone model; the CSV records it too.
 2. In the app, turn on **Record baseline trials**. Leave calibration at its defaults (65% of list words, 30% produce, 3–20 m window, position 5 m, reliable) unless a trial is testing activation.
 3. Decide the Gemini proxy setting once per session and keep it fixed. Leave it empty for the on-device baseline.
@@ -107,6 +123,12 @@ One row per trial.
 | `last_read` | Last OCR text, or top produce labels |
 | `notes` | Free text |
 | `list_entry` | The grocery-list words the scan matched against |
+| `app` | `demo` or `shellapp` (blank in older files) |
+| `trial_mode` | `demo`; ShellApp: `testScan` (detection forced on) or `walk` (at a stop on a real walk) |
+| `vision_revisions` | Pinned Vision request revisions (`VisionRevisions.summary`), e.g. `text=3 mask=1 …` |
+| `language_correction` | OCR language correction `on` or `off` |
+
+Columns are only ever appended, so `summarize.py` reads older files; it groups runs by device, app, mode, path, thresholds, correction and Vision revisions. The trial record and writer are `Sources/ItemRecognition/Evaluation/BaselineTrial.swift`, shared by both apps.
 
 ## Reasons by stage
 

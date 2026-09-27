@@ -7,6 +7,9 @@ struct ScanTarget {
     /// The `GroceryItem` on the list.
     let listItemID: UUID
     let name: String
+    /// The catalog product the item is linked to, for trial records.
+    let tcin: String
+    let productTitle: String
     /// What the user put on the list. The label is read for these words, and "Is this …?" names it.
     let query: GroceryQuery
     let catalog: ShoppingCatalog
@@ -19,6 +22,8 @@ struct ScanTarget {
         guard let tcin = item.tcin, let product = products.first(where: { $0.tcin == tcin }) else { return nil }
         listItemID = item.id
         name = item.name
+        self.tcin = tcin
+        productTitle = product.title
         query = GroceryQuery(name: item.name, brand: item.brand, label: item.label)
         catalog = ShoppingCatalog(target: product, spot: item.location, products: products,
                                   landmark: landmark, windowMeters: windowMeters)
