@@ -42,6 +42,8 @@ final class Product {
         guard let currentPrice, let regularPrice else { return false }
         return currentPrice < regularPrice
     }
+
+    /// Primary location as shown in the Target app, e.g. "G44".
     var locationLabel: String? {
         locations.sorted { ($0.block, $0.aisle) < ($1.block, $1.aisle) }.first?.label
     }
