@@ -45,7 +45,10 @@ final class AppModel {
     var isVoiceConnected = false
     /// True while the first connection is being made, so the listening button can't start a second one.
     var isConnectingVoice = false
-    var isDeviceConnected = true
+    /// True while the ESP32 on the cart is connected over Bluetooth (see `CartBluetooth`).
+    var isDeviceConnected = false
+    /// True while the cart's distance sensor sees something close in front. The watch buzzes the whole time.
+    private(set) var isObstacleAhead = false
     /// The last thing the user said to the voice agent.
     var transcript: String?
     /// What the voice agent last did, e.g. "Oat milk added to your list".
@@ -57,8 +60,9 @@ final class AppModel {
     /// The camera screen is up. Only `startShopping()`, the X (`endShopping()`) and reaching the
     /// cashier change it.
     var isCameraOpen = false
-    /// The one ARKit session: the camera feed, and the tracking navigation walks by.
-    let camera = CameraService()
+    /// The one ARKit session: the camera feed, the tracking navigation walks by, and the frames
+    /// hand guiding reads.
+    let camera: CameraService
     /// Looks for the list's items with the camera at each stop.
     let scanner = ItemScanner()
     /// Baseline trials, in Debug builds with tester mode on (see the Trials screen).
@@ -76,11 +80,23 @@ final class AppModel {
     @ObservationIgnored private var context: ModelContext { container.mainContext }
     @ObservationIgnored private var voice: VoiceAgent?
     @ObservationIgnored private let narrator = Narrator()
-    @ObservationIgnored private let watch = WatchLink()
+    @ObservationIgnored private let watch: WatchLink
+    @ObservationIgnored private let cartDevice: CartBluetooth
+    @ObservationIgnored private var obstacleDetector = ObstacleDetector()
+    /// Finds the product on the shelf with the arm and guides the user's hand to it, using the
+    /// camera's ARKit frames.
+    @ObservationIgnored let pickup: PickupGuide
 
     init(container: ModelContainer) {
         self.container = container
         ProductImporter.importIfChanged(into: container.mainContext)
+        let camera = CameraService()
+        let cartDevice = CartBluetooth()
+        let watch = WatchLink()
+        self.camera = camera
+        self.cartDevice = cartDevice
+        self.watch = watch
+        pickup = PickupGuide(arm: ArmController(cart: cartDevice), watch: watch, session: camera.session)
         currentList = Self.openList(in: container.mainContext)
         highlightedItemID = currentList.sortedItems.last?.id
         refresh()
@@ -89,6 +105,7 @@ final class AppModel {
         scanner.found = { [weak self] id in self?.putInCart(id) }
         scanner.depth = ProductDepthEstimator(session: camera.session)
         scanner.trials = trials
+        connectCartDevice()
     }
 
     func toggleCollected(_ id: UUID) {
@@ -205,6 +222,7 @@ final class AppModel {
     }
 
     private func closeCamera() {
+        pickup.stop()
         camera.stop()
         isCameraOpen = false
     }
@@ -462,6 +480,32 @@ final class AppModel {
     func list(number: Int) -> GroceryList? {
         let descriptor = FetchDescriptor<GroceryList>(predicate: #Predicate { $0.number == number })
         return try? context.fetch(descriptor).first
+    }
+
+    // MARK: Cart device and watch
+
+    private func connectCartDevice() {
+        cartDevice.onConnectionChange = { [weak self] isConnected in
+            guard let self else { return }
+            isDeviceConnected = isConnected
+            // No readings without the cart, so stop the alarm instead of buzzing forever.
+            if !isConnected {
+                obstacleDetector.reset()
+                setObstacleAhead(false)
+            }
+        }
+        cartDevice.onDistance = { [weak self] cm in
+            guard let self, obstacleDetector.update(distanceCm: cm) else { return }
+            setObstacleAhead(obstacleDetector.isObstacleAhead)
+        }
+    }
+
+    private func setObstacleAhead(_ isAhead: Bool) {
+        guard isAhead != isObstacleAhead else { return }
+        isObstacleAhead = isAhead
+        // Watch only, no voice: the alarm buzzes until the path is clear.
+        watch.send(isAhead ? .obstacleOn : .obstacleOff,
+                   text: isAhead ? "Stop. Something is in front of the cart." : "Path clear.")
     }
 
  // MARK: Onboarding

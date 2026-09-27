@@ -434,7 +434,9 @@ struct Survey {
         }
         var solved = [Double](repeating: 0, count: n)
         for row in (0..<n).reversed() {
-            solved[row] = (b[row] - (row + 1..<n).reduce(0) { $0 + a[row][$1] * solved[$1] }) / a[row][row]
+            // Two steps: as one expression, Swift can't type-check it in time (Xcode 26.3).
+            let known = (row + 1..<n).reduce(0.0) { $0 + a[row][$1] * solved[$1] }
+            solved[row] = (b[row] - known) / a[row][row]
         }
         return solved
     }

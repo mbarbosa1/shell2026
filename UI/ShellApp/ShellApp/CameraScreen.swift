@@ -26,24 +26,24 @@ struct CameraScreen: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
+        // Top left, one under the other: what the camera is looking for, then (Debug builds) the
+        // tester bar and the hand-guide test panel.
         .overlay(alignment: .topLeading) {
-            if let target = model.scanner.target {
-                ScanTargetPill(name: target.name, meters: model.scanner.objectMeters)
-                    .padding(.leading, 16)
-                    // Clear of the X: its 56 pt button, its 16 pt margin, and a gap.
-                    .padding(.trailing, 80)
+            VStack(alignment: .leading, spacing: 8) {
+                if let target = model.scanner.target {
+                    ScanTargetPill(name: target.name, meters: model.scanner.objectMeters)
+                }
+                #if DEBUG
+                if model.trials.isEnabled, model.scanner.target != nil {
+                    TesterBar()
+                }
+                PickupTestPanel()
+                #endif
             }
+            .padding(.leading, 16)
+            // Clear of the X: its 56 pt button, its 16 pt margin, and a gap.
+            .padding(.trailing, 80)
         }
-        #if DEBUG
-        .overlay(alignment: .top) {
-            if model.trials.isEnabled, model.scanner.target != nil {
-                TesterBar()
-                    .padding(.horizontal, 16)
-                    // Below the "Looking for" pill and the X.
-                    .padding(.top, 64)
-            }
-        }
-        #endif
         .overlay(alignment: .topTrailing) {
             Button { model.endShopping() } label: {
                 Image(systemName: "xmark")
@@ -136,6 +136,32 @@ private struct TesterBar: View {
         .overlay {
             RoundedRectangle(cornerRadius: 22).strokeBorder(.orange.opacity(0.6))
         }
+    }
+}
+#endif
+
+#if DEBUG
+/// Debug-only buttons for testing hand guiding before computer vision is connected. In the top-left
+/// column, so they stay clear of the X.
+private struct PickupTestPanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let pickup = model.pickup
+        HStack {
+            Button("Test hand guide") { pickup.testHandGuide() }
+            Button("Stop") { pickup.stop() }
+            Text(status(pickup))
+                .font(.caption.monospaced())
+        }
+        .buttonStyle(.bordered)
+        .padding(8)
+        .background(.black.opacity(0.6), in: .rect(cornerRadius: 12))
+    }
+
+    private func status(_ pickup: PickupGuide) -> String {
+        let advice = pickup.advice.map { "\($0)" } ?? "–"
+        return "\(pickup.phase) · \(advice)"
     }
 }
 #endif

@@ -7,6 +7,12 @@ import WatchConnectivity
 /// watch app (ShellWatch/WatchReceiver.swift).
 enum WatchHaptic: String {
     case right, left, turnAround, go, arrived, wrongWay, finished
+    /// Cart distance sensor (`ObstacleDetector`): the watch buzzes from `obstacleOn` until `obstacleOff`.
+    case obstacleOn, obstacleOff
+    /// The arm has the product centered, and hand guiding starts (`PickupGuide`).
+    case productFound
+    /// Hand guiding: the watch repeats the direction until the next cue, `handOnItem` or `handGuideOff`.
+    case handLeft, handRight, handUp, handDown, handOnItem, handGuideOff
 }
 
 /// Sends navigation cues to the watch app. Live messages only: a turn that arrives late is worse
