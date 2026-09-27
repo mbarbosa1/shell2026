@@ -32,7 +32,7 @@ enum ProductMatcher {
 
     /// "Fresh Banana - each - Good & Gather™" → "Fresh Banana". The tagline after ":" is dropped
     /// too, so butter's "Whole Milk Fat" doesn't make it whole milk.
-    private static func ownName(of title: String) -> String {
+    static func ownName(of title: String) -> String {
         title.components(separatedBy: ":")[0]
             .replacingOccurrences(of: " – ", with: " - ")
             .components(separatedBy: " - ")[0]

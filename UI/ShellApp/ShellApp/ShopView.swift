@@ -66,7 +66,7 @@ struct ShopView: View {
                             .accessibilityHint("Saves this list to History and starts a new one")
                     }
 
-                    Button("Start shopping") { model.isCameraOpen = true }
+                    Button("Start shopping") { model.startShopping() }
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityHint("Opens the camera on the shopping mount")
                 }

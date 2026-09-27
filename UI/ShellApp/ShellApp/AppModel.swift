@@ -22,6 +22,18 @@ final class AppModel {
     var cart: [GroceryItem] {
         items.filter(\.isCollected).sorted { ($0.collectedAt ?? .distantPast) < ($1.collectedAt ?? .distantPast) }
     }
+    /// Items still to pick up, by block then aisle so they roughly follow the store.
+    /// Items with no location (not in the catalog) come last.
+    var itemsToGet: [GroceryItem] {
+        items.filter { !$0.isCollected }.sorted { a, b in
+            switch (a.block, b.block) {
+            case (nil, nil): return false
+            case (nil, _): return false
+            case (_, nil): return true
+            case let (blockA?, blockB?): return (blockA, a.aisle ?? 0) < (blockB, b.aisle ?? 0)
+            }
+        }
+    }
     /// The newest cart item, highlighted as "Just added".
     var justAddedCartID: UUID? { cart.last?.id }
 
@@ -76,6 +88,7 @@ final class AppModel {
             item.price = usual.price
             item.floor = usual.floor
             insert(item, source: source)
+            if item.tcin == nil { matchToCatalog(item) }
             added.append(item)
         }
         save()
@@ -94,6 +107,7 @@ final class AppModel {
     //along with adding items to the database we need to update status
     func addItem(_ item: GroceryItem, source: ListEvent.Source = .app) {
         insert(item, source: source)
+        matchToCatalog(item)
         save()
         highlightedItemID = item.id
         confirmation = "\(item.name) added to your list"
@@ -133,12 +147,16 @@ final class AppModel {
     ) -> Bool {
         guard let item = item(named: name) else { return false }
         if quantity != nil || brand != nil || label != nil || size != nil || aisle != nil || block != nil {
+            if brand != nil || label != nil || size != nil {
+                unlink(item)
+            }
             if let quantity { item.quantity = quantity }
             if let brand { item.brand = brand }
             if let label { item.label = label }
             if let size { item.size = size }
             if let aisle { item.aisle = aisle }
             if let block { item.block = block.uppercased() }
+            if item.tcin == nil { matchToCatalog(item) }
             log(.updated, item.name, source: source)
             save()
         }
@@ -188,6 +206,37 @@ final class AppModel {
         item.fill(from: product)
         save()
         return true
+    }
+
+    /// The catalog product an item is linked to.
+    func product(for item: GroceryItem) -> Product? {
+        guard let tcin = item.tcin else { return nil }
+        return catalogProducts.first { $0.tcin == tcin }
+    }
+
+    /// Links anything not matched yet, then opens the camera. Returns the items the store doesn't carry.
+    /// Called by the Start shopping button and when Mira opens the camera.
+    @discardableResult
+    func startShopping() -> [GroceryItem] {
+        let notFound = matchUnlinkedItems()
+        isCameraOpen = true
+        return notFound
+    }
+
+    /// Clears what the item got from its old product, so it can be matched again. Values the
+    /// user set themselves (a different brand or aisle than the product's) are kept.
+    private func unlink(_ item: GroceryItem) {
+        if let old = product(for: item) {
+            if item.brand == old.brand { item.brand = nil }
+            if item.size == old.size { item.size = nil }
+            if let spot = old.primaryLocation, item.aisle == spot.aisle, item.block == spot.block {
+                item.aisle = nil
+                item.block = nil
+                item.floor = nil
+            }
+        }
+        item.tcin = nil
+        item.price = nil
     }
 
     /// Matches every item on the open list that isn't linked yet. Returns the ones the store doesn't carry.
@@ -259,7 +308,7 @@ final class AppModel {
             return ([header] + (items.isEmpty ? ["   (no items)"] : items)).joined(separator: "\n")
         }
         let products = (try? context.fetchCount(FetchDescriptor<Product>())) ?? 0
-        return (rows + ["📦 Product catalog: \(products) products"]).joined(separator: "\n")
+        return (rows + ["Product catalog: \(products) products"]).joined(separator: "\n")
     }
     #endif
     //as soon as you finish the user session it doesnt import into the database
