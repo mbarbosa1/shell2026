@@ -1,112 +1,131 @@
+#if os(iOS)
+@_exported import PersonDistanceCore
 import ARKit
 import CoreGraphics
 import CoreVideo
+import simd
 
-/// Meters from the phone's camera to one product in view.
+/// What one ARKit frame gives for a reading, taken off the `ARFrame` straight away: holding
+/// frames stalls ARKit's camera. The box that is measured and the depth it is measured in come
+/// from the same frame (README, "Rules"), never from a newer one.
 ///
-/// **Interim, display-only** (README, "Interim display readout"): ShellApp shows the number on the
-/// camera screen while it looks for an item. Nothing is decided or spoken from it. It follows two of
-/// the plan's rules: one product only, and LiDAR scene depth. It doesn't meet the rest yet: it
-/// measures before automatic confirmation, and it reads ARKit's latest frame rather than the frame
-/// recognition checked, so the box can be a fraction of a second old.
-///
-/// With scene depth, the reading is the median of the confident depth samples in the middle half of
-/// the product's box, turned from distance-to-the-camera-plane into straight-line range with the
-/// camera's intrinsics. Without it (no LiDAR, or no depth on this frame yet), it's an ARKit raycast
-/// from the box's centre against surfaces ARKit estimates.
-@MainActor
-public struct ProductDepthEstimator {
-    private let session: ARSession
+/// Sendable because nothing writes to it or its buffers after it's taken; it's only read.
+public struct CameraSnapshot: @unchecked Sendable {
+    /// ARKit's landscape camera image. Boxes and points passed to this package are in its pixels.
+    public let image: CVPixelBuffer
+    public let imageSize: CGSize
+    /// `ARFrame.timestamp`.
+    public let time: TimeInterval
+    /// LiDAR depth in meters from the camera plane, and ARKit's confidence in each pixel. Nil
+    /// while depth is off (before the shopper's Yes) or on a frame that has none yet.
+    let depth: CVPixelBuffer?
+    let confidence: CVPixelBuffer?
+    let intrinsics: CameraIntrinsics
+    /// Camera to world (`ARCamera.transform`), for points that must outlast this frame.
+    let cameraToWorld: simd_float4x4
 
-    /// `session` is the app's one ARKit session; this only reads its frames.
-    public init(session: ARSession) {
-        self.session = session
+    @MainActor
+    public init(_ frame: ARFrame) {
+        image = frame.capturedImage
+        imageSize = CGSize(width: CVPixelBufferGetWidth(image), height: CVPixelBufferGetHeight(image))
+        time = frame.timestamp
+        depth = frame.sceneDepth?.depthMap
+        confidence = frame.sceneDepth?.confidenceMap
+        let k = frame.camera.intrinsics
+        intrinsics = CameraIntrinsics(fx: Double(k[0][0]), fy: Double(k[1][1]), cx: Double(k[2][0]), cy: Double(k[2][1]),
+                                      resolution: frame.camera.imageResolution)
+        cameraToWorld = frame.camera.transform
     }
 
-    /// Adds LiDAR scene depth to the camera's configuration when the phone has LiDAR. Other phones'
-    /// configuration is left as it is.
-    public static func enableSceneDepth(in configuration: ARWorldTrackingConfiguration) {
-        guard ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else { return }
-        configuration.frameSemantics.insert(.sceneDepth)
-    }
+    /// True when the frame has LiDAR depth.
+    public var hasDepth: Bool { depth != nil }
 
-    /// Meters to the product, or nil when there isn't exactly one product to measure or no reading.
-    ///
-    /// Boxes are in the camera image's pixels from its top left (ARKit's landscape image).
-    /// - Parameters:
-    ///   - focused: the object recognition matched when several were in view.
-    ///   - region: the object region the frame found. It covers every object in view.
-    ///   - objectCount: how many objects `region` covers.
-    ///   - imageSize: the camera image's size in pixels.
-    public func range(focused: CGRect?, region: CGRect?, objectCount: Int, imageSize: CGSize) -> Double? {
-        // One product only: a region around several objects isn't one surface.
-        guard let box = focused ?? (objectCount == 1 ? region : nil),
-              imageSize.width > 0, imageSize.height > 0,
-              let frame = session.currentFrame else { return nil }
-        if let depth = frame.sceneDepth {
-            return sceneRange(to: box, imageSize: imageSize, depth: depth, camera: frame.camera)
-        }
-        let centre = CGPoint(x: box.midX / imageSize.width, y: box.midY / imageSize.height)
-        return raycastRange(to: centre, in: frame)
-    }
-
-    // MARK: Scene depth
-
-    private func sceneRange(to box: CGRect, imageSize: CGSize, depth: ARDepthData, camera: ARCamera) -> Double? {
-        let map = depth.depthMap
-        let width = CVPixelBufferGetWidth(map), height = CVPixelBufferGetHeight(map)
-        // The depth map sees what the camera image sees, at a lower resolution.
-        let sx = CGFloat(width) / imageSize.width, sy = CGFloat(height) / imageSize.height
-        // The middle half of the box: the product's own surface, clear of its edges and what's behind.
-        let inner = box.insetBy(dx: box.width / 4, dy: box.height / 4)
-        let x0 = max(Int(inner.minX * sx), 0), x1 = min(Int(inner.maxX * sx), width - 1)
-        let y0 = max(Int(inner.minY * sy), 0), y1 = min(Int(inner.maxY * sy), height - 1)
-        guard x0 <= x1, y0 <= y1 else { return nil }
-
-        let confidence = depth.confidenceMap
+    /// Confident depths (meters from the camera plane) in a window of the depth map.
+    func depths(in window: (x: ClosedRange<Int>, y: ClosedRange<Int>)) -> [Float] {
+        guard let map = depth else { return [] }
         CVPixelBufferLockBaseAddress(map, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
         if let confidence { CVPixelBufferLockBaseAddress(confidence, .readOnly) }
         defer { if let confidence { CVPixelBufferUnlockBaseAddress(confidence, .readOnly) } }
-        guard let depthBase = CVPixelBufferGetBaseAddress(map) else { return nil }
+        guard let depthBase = CVPixelBufferGetBaseAddress(map) else { return [] }
         let depthRow = CVPixelBufferGetBytesPerRow(map)
         let confidenceBase = confidence.flatMap(CVPixelBufferGetBaseAddress)
         let confidenceRow = confidence.map(CVPixelBufferGetBytesPerRow) ?? 0
 
-        var samples: [Float] = []
-        samples.reserveCapacity((x1 - x0 + 1) * (y1 - y0 + 1))
-        for y in y0...y1 {
+        var depths: [Float] = []
+        depths.reserveCapacity(window.x.count * window.y.count)
+        for y in window.y {
             let meters = (depthBase + y * depthRow).assumingMemoryBound(to: Float32.self)
             let levels = confidenceBase.map { ($0 + y * confidenceRow).assumingMemoryBound(to: UInt8.self) }
-            for x in x0...x1 {
+            for x in window.x {
                 if let levels, levels[x] < UInt8(ARConfidenceLevel.medium.rawValue) { continue }
                 let z = meters[x]
-                if z.isFinite, z > 0 { samples.append(z) }
+                if z.isFinite, z > 0 { depths.append(z) }
             }
         }
-        guard !samples.isEmpty else { return nil }
-        samples.sort()
-        let z = Double(samples[samples.count / 2])
-
-        // Depth is measured from the camera plane. A product off the lens axis is farther than that,
-        // by the length of its ray through the image: sqrt(1 + ((u - cx) / fx)² + ((v - cy) / fy)²).
-        let k = camera.intrinsics
-        let fx = Double(k[0][0]), fy = Double(k[1][1]), cx = Double(k[2][0]), cy = Double(k[2][1])
-        guard fx > 0, fy > 0 else { return z }
-        // The intrinsics are for `camera.imageResolution`, the same image as `box` but checked anyway.
-        let u = Double(box.midX * camera.imageResolution.width / imageSize.width)
-        let v = Double(box.midY * camera.imageResolution.height / imageSize.height)
-        return z * ((1 + pow((u - cx) / fx, 2) + pow((v - cy) / fy, 2))).squareRoot()
+        return depths
     }
 
-    // MARK: Raycast (no LiDAR)
+    /// The depth map's size in pixels, or nil without depth.
+    var depthSize: (width: Int, height: Int)? {
+        depth.map { (CVPixelBufferGetWidth($0), CVPixelBufferGetHeight($0)) }
+    }
 
-    /// `point` is 0…1 from the top left of the camera image.
-    private func raycastRange(to point: CGPoint, in frame: ARFrame) -> Double? {
-        let query = frame.raycastQuery(from: point, allowing: .estimatedPlane, alignment: .any)
-        guard let hit = session.raycast(query).first else { return nil }
-        let camera = frame.camera.transform.columns.3
-        let spot = hit.worldTransform.columns.3
-        return Double(simd_distance(SIMD3(camera.x, camera.y, camera.z), SIMD3(spot.x, spot.y, spot.z)))
+    /// The world point seen at `point` (image pixels) at camera-plane depth `z`.
+    func worldPoint(planeDepth z: Double, at point: CGPoint) -> SIMD3<Float> {
+        let camera = DepthGeometry.arkitCameraPoint(
+            DepthGeometry.cameraPoint(planeDepth: z, at: point, imageSize: imageSize, intrinsics: intrinsics))
+        let world = cameraToWorld * SIMD4(Float(camera.x), Float(camera.y), Float(camera.z), 1)
+        return SIMD3(world.x, world.y, world.z)
+    }
+
+    /// Camera-plane depth of a world point in this frame: how far in front of the camera it is.
+    func planeDepth(of world: SIMD3<Float>) -> Double {
+        let camera = cameraToWorld.inverse * SIMD4(world, 1)
+        return Double(-camera.z)
     }
 }
+
+/// A product's LiDAR reading, and where the middle of its box is in the world.
+struct ProductReading {
+    let sample: DistanceSample
+    let worldPoint: SIMD3<Float>
+}
+
+/// Meters from the phone's camera to one product, from LiDAR scene depth.
+///
+/// The reading is the median of the medium- and high-confidence depth samples in the middle half
+/// of the product's box, turned from distance-to-the-camera-plane into straight-line range with
+/// the camera's intrinsics. Whether it is good enough to use is `SpatialValidityPolicy`'s call.
+enum ProductDepthEstimator {
+    /// Nil when the frame has no depth, or no confident depth over the box.
+    /// - Parameter box: in `frame.image`'s pixels from its top left.
+    static func reading(of box: CGRect, in frame: CameraSnapshot) -> ProductReading? {
+        guard let size = frame.depthSize,
+              let window = DepthGeometry.window(for: box, imageSize: frame.imageSize,
+                                                depthWidth: size.width, depthHeight: size.height) else { return nil }
+        let depths = frame.depths(in: window)
+        guard let summary = DepthGeometry.summarize(depths, considered: window.x.count * window.y.count) else { return nil }
+        let centre = CGPoint(x: box.midX, y: box.midY)
+        let meters = DepthGeometry.range(planeDepth: summary.median, at: centre,
+                                         imageSize: frame.imageSize, intrinsics: frame.intrinsics)
+        return ProductReading(
+            sample: DistanceSample(meters: meters, coverage: summary.coverage, spread: summary.spread, frameTime: frame.time),
+            worldPoint: frame.worldPoint(planeDepth: summary.median, at: centre))
+    }
+
+    /// The fingertip against a product whose middle is at `product` (world). Nil without confident
+    /// depth at the fingertip.
+    /// - Parameter fingertip: in `frame.image`'s pixels from its top left.
+    static func hand(at fingertip: CGPoint, reaching product: SIMD3<Float>, in frame: CameraSnapshot) -> HandSample? {
+        // Two depth pixels either side: about the width of a fingertip at arm's length.
+        guard let size = frame.depthSize,
+              let window = DepthGeometry.window(around: fingertip, radius: 2, imageSize: frame.imageSize,
+                                                depthWidth: size.width, depthHeight: size.height),
+              let z = DepthGeometry.nearestSurface(frame.depths(in: window)) else { return nil }
+        let finger = frame.worldPoint(planeDepth: z, at: fingertip)
+        return HandSample(meters: Double(simd_distance(finger, product)),
+                          gap: frame.planeDepth(of: product) - z, frameTime: frame.time)
+    }
+}
+#endif

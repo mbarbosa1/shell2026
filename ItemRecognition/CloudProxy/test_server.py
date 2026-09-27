@@ -16,6 +16,10 @@ def body(image=JPEG, labels=LABELS):
     return json.dumps({"image_base64": base64.b64encode(image).decode(), "labels": labels}).encode()
 
 
+def checkout_body(image=JPEG):
+    return json.dumps({"image_base64": base64.b64encode(image).decode()}).encode()
+
+
 def gemini_reply(text, model="gemini-test-001", finish="STOP"):
     return {"modelVersion": model, "candidates": [{"finishReason": finish, "content": {"role": "model", "parts": [
         {"text": "thinking about the image", "thought": True},
@@ -87,6 +91,64 @@ class ProxyTests(unittest.TestCase):
         caught.exception.close()
         with post("secret") as response:
             self.assertEqual(json.load(response)["label"], "apple")
+
+    def test_checkout_request_asks_for_a_box_and_scales_it(self):
+        sent = {}
+
+        def send(request, key, model):
+            sent.update(request=request)
+            return gemini_reply('{"found": true, "box_2d": [100, 200, 900, 600], "confidence": 0.87}')
+
+        result = server.find_checkout(checkout_body(), self.config, send)
+        self.assertEqual(result, {"found": True, "box": [0.1, 0.2, 0.9, 0.6], "confidence": 0.87,
+                                  "model": "gemini-test-001"})
+        schema = sent["request"]["generationConfig"]["responseJsonSchema"]
+        self.assertEqual(set(schema["properties"]), {"found", "box_2d", "confidence"})
+        self.assertIn("self-checkout", sent["request"]["contents"][0]["parts"][0]["text"])
+        image = sent["request"]["contents"][0]["parts"][1]["inline_data"]
+        self.assertEqual(base64.b64decode(image["data"]), JPEG)
+
+    def test_checkout_not_found_has_no_box(self):
+        result = server.find_checkout(checkout_body(), self.config,
+                                      lambda *_: gemini_reply('{"found": false, "confidence": 0.9}'))
+        self.assertEqual((result["found"], result["box"]), (False, None))
+
+    def test_checkout_bad_answers_are_errors(self):
+        for text in ['{"found": true, "confidence": 0.9}',
+                     '{"found": true, "box_2d": [100, 200, 900], "confidence": 0.9}',
+                     '{"found": true, "box_2d": [100, 200, 1900, 600], "confidence": 0.9}',
+                     '{"found": true, "box_2d": [900, 200, 100, 600], "confidence": 0.9}',
+                     '{"found": "yes", "box_2d": [100, 200, 900, 600], "confidence": 0.9}',
+                     '{"found": true, "box_2d": [100, 200, 900, 600], "confidence": 2}',
+                     "oops"]:
+            with self.assertRaises(server.ProxyError) as caught:
+                server.parse_checkout_response(gemini_reply(text), "m")
+            self.assertEqual(caught.exception.status, 502)
+
+    def test_checkout_safety_block_is_not_found(self):
+        result = server.parse_checkout_response({"promptFeedback": {"blockReason": "SAFETY"}}, "m")
+        self.assertEqual((result["found"], result["box"]), (False, None))
+
+    def test_checkout_rejects_non_jpeg_and_mock_skips_gemini(self):
+        with self.assertRaises(server.ProxyError) as caught:
+            server.find_checkout(checkout_body(image=b"GIF89a"), self.config, lambda *_: self.fail("upstream called"))
+        self.assertEqual(caught.exception.status, 400)
+        config = dict(self.config, api_key="", mock_label="onion")
+        result = server.find_checkout(checkout_body(), config, lambda *_: self.fail("upstream called"))
+        self.assertEqual((result["found"], result["model"]), (True, "mock"))
+
+    def test_checkout_http_round_trip(self):
+        config = dict(self.config, token="secret")
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(
+            config, lambda *_: gemini_reply('{"found": true, "box_2d": [0, 0, 500, 500], "confidence": 0.7}')))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        request = urllib.request.Request(f"http://127.0.0.1:{httpd.server_address[1]}/v1/self-checkout",
+                                         data=checkout_body(), method="POST",
+                                         headers={"Content-Type": "application/json", "Authorization": "Bearer secret"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(json.load(response)["box"], [0.0, 0.0, 0.5, 0.5])
 
     def test_healthz_reports_the_configured_model(self):
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(self.config, lambda *_: {}))

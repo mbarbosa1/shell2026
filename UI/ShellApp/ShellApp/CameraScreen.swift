@@ -7,34 +7,74 @@ import SwiftUI
 struct CameraScreen: View {
     @Environment(AppModel.self) private var model
 
+    private var showsTroubleshooting: Bool {
+        #if DEBUG
+        model.trials.isEnabled && model.scanner.isTestScan
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                Color.black.ignoresSafeArea()
 
-            if model.camera.isRunning {
-                CameraPreview(session: model.camera.session)
-                    .ignoresSafeArea()
-            }
-
-            VStack(spacing: 8) {
-                if let question = model.scanner.question {
-                    ScanQuestionCard(question: question)
+                if model.camera.isRunning {
+                    CameraPreview(session: model.camera.session)
+                        .ignoresSafeArea()
                 }
-                ToGetPanel()
-                CartPanel()
+
+                VStack(spacing: 8) {
+                    if showsTroubleshooting {
+                        #if DEBUG
+                        ScanTroubleshootingPanel()
+                            .frame(height: geometry.size.height * 0.58)
+                        #endif
+                    } else {
+                        if let question = model.scanner.question {
+                            ScanQuestionCard(question: question)
+                        }
+                        ToGetPanel()
+                        CartPanel()
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
         }
         // Top left, one under the other: what the camera is looking for, then (Debug builds, tester
         // mode) the tester bar.
         .overlay(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 8) {
                 if let target = model.scanner.target {
-                    ScanTargetPill(name: target.name, meters: model.scanner.objectMeters)
+                    ScanTargetPill(name: target.name)
+                }
+                if let item = model.items.first(where: { $0.id == model.range.item }) {
+                    switch model.range.status {
+                    case .measuring:
+                        ProductRangePill(caption: "From camera", name: item.name, meters: model.range.sample?.meters)
+                    case .anchored:
+                        // The user distance, while the hand is guided to it.
+                        ProductRangePill(caption: "Hand to item", name: item.name, meters: model.range.hand?.meters)
+                    default:
+                        EmptyView()
+                    }
+                }
+                // After the last item, along the self-checkout row: which recognizer found it, and
+                // how far it is.
+                switch model.checkout.phase {
+                case .looking:
+                    ProductRangePill(caption: "Looking for", name: "Self checkout", meters: nil)
+                case .guiding:
+                    ProductRangePill(caption: model.checkout.sighting?.source == .appleVision
+                                         ? "Seen by Apple Vision" : "Seen by Gemini",
+                                     name: "Self checkout", meters: model.range.sample?.meters)
+                default:
+                    EmptyView()
                 }
                 #if DEBUG
-                if model.trials.isEnabled, model.scanner.target != nil {
+                if model.trials.isEnabled, model.scanner.target != nil, !showsTroubleshooting {
                     TesterBar()
                 }
                 #endif
@@ -86,12 +126,40 @@ private struct MicrophoneButton: View {
     }
 }
 
-/// What the camera is looking for at this stop, and how far the object in view is from the phone.
-/// A second check for anyone who can see some of the screen: it's read when VoiceOver lands on
-/// it, but never announced.
+/// What the camera is looking for at this stop. A second check for anyone who can see some of the
+/// screen: it's read when VoiceOver lands on it, but never announced.
 private struct ScanTargetPill: View {
     let name: String
-    /// Nil with no object in view.
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Looking for")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+            Text(name)
+                .font(.headline)
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.14))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Looking for \(name)")
+    }
+}
+
+/// PersonDistance's reading for the product the shopper said Yes to: its distance from the camera
+/// while the arm turns onto it, then the fingertip's distance from it while the hand is guided.
+/// Read when VoiceOver lands on it, never announced; the watch gives the guidance.
+private struct ProductRangePill: View {
+    /// "From camera" or "Hand to item".
+    let caption: String
+    let name: String
+    /// Nil with no valid reading right now.
     let meters: Double?
 
     /// "1.2"
@@ -102,7 +170,7 @@ private struct ScanTargetPill: View {
     var body: some View {
         HStack(alignment: .lastTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Looking for")
+                Text(caption)
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                 Text(name)
@@ -123,8 +191,8 @@ private struct ScanTargetPill: View {
         }
         .animation(.snappy, value: figure)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Looking for \(name)")
-        .accessibilityValue(figure.map { "\($0) meters away" } ?? "No object in view")
+        .accessibilityLabel("\(name), \(caption.lowercased())")
+        .accessibilityValue(figure.map { "\($0) meters" } ?? "No reading")
     }
 }
 

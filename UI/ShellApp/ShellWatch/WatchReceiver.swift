@@ -12,11 +12,14 @@ enum WatchHaptic: String {
     case productFound
     /// Hand guiding: each direction repeats until the next cue.
     case handLeft, handRight, handUp, handDown, handOnItem, handGuideOff
+    /// Hand guiding: lined up with the product but short of it. Repeats like the directions.
+    case handForward
 
     /// Turns are counted taps: right one, left two, turn around three. The rest use the watch's
     /// own patterns, which feel different from a plain tap. Hand left/right reuse the turn taps,
-    /// and up/down use the rising and falling patterns. The obstacle alarm and hand directions
-    /// repeat (see `WatchReceiver`); `obstacleOff` and `handGuideOff` only stop them.
+    /// up/down use the rising and falling patterns, and "reach further" the retry pattern, which
+    /// nothing else uses. The obstacle alarm and hand directions repeat (see `WatchReceiver`);
+    /// `obstacleOff` and `handGuideOff` only stop them.
     var pattern: [WKHapticType] {
         switch self {
         case .right, .handRight: [.notification]
@@ -29,6 +32,7 @@ enum WatchHaptic: String {
         case .productFound: [.click, .click]
         case .handUp: [.directionUp]
         case .handDown: [.directionDown]
+        case .handForward: [.retry]
         case .handOnItem: [.success, .success]
         case .obstacleOff, .handGuideOff: []
         }
@@ -84,7 +88,7 @@ final class WatchReceiver: NSObject {
         case .obstacleOff:
             alarm?.cancel()
             alarm = nil
-        case .handLeft, .handRight, .handUp, .handDown:
+        case .handLeft, .handRight, .handUp, .handDown, .handForward:
             repeatHandDirection(haptic)
         case .handOnItem, .handGuideOff:
             handGuide?.cancel()

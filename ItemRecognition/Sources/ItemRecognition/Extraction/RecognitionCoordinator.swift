@@ -25,6 +25,18 @@ public struct RecognitionUpdate: Sendable {
     public let insight: String?
     /// Set once the one-minute scan deadline has passed. The shopper should leave this item.
     public let advanceNotice: String?
+    public let confirmationCount: Int
+    public let requiredConfirmations: Int
+
+    /// Actionable framing advice, including states with no directional correction.
+    public var framingInstruction: String? {
+        guard gate.isDetectionActive, !awaitingVerdict, advanceNotice == nil else { return nil }
+        if let guidance { return guidance.message }
+        guard let assessment else { return nil }
+        if assessment.quality == .notLocated { return "Bring the item into view and hold the camera steady" }
+        if assessment.isClassifiable { return "Centered. Hold the camera steady" }
+        return assessment.message
+    }
     /// Machine suggestions awaiting a verdict are never final item-found events.
     public var confirmedObservation: ItemObservation? {
         guard !awaitingVerdict else { return nil }
@@ -53,7 +65,8 @@ public struct RecognitionUpdate: Sendable {
                 awaitingVerdict: Bool = false, insight: String? = nil, activeMode: RecognitionModeNotice? = nil,
                 assessment: FrameAssessment? = nil,
                 textReadiness: LabelRegionDetection.Readiness? = nil, didRunOCR: Bool = false,
-                advanceNotice: String? = nil, focusedObject: CGRect? = nil, progress: String? = nil) {
+                advanceNotice: String? = nil, focusedObject: CGRect? = nil, progress: String? = nil,
+                confirmationCount: Int = 0, requiredConfirmations: Int = 1) {
         self.gate = gate; self.observation = observation; self.result = result; self.side = side
         self.guidance = awaitingVerdict ? nil : guidance; self.modeNotice = modeNotice
         self.awaitingVerdict = awaitingVerdict; self.insight = insight
@@ -61,6 +74,8 @@ public struct RecognitionUpdate: Sendable {
         self.assessment = assessment; self.textReadiness = textReadiness; self.didRunOCR = didRunOCR
         self.advanceNotice = advanceNotice; self.focusedObject = focusedObject
         self.progress = awaitingVerdict ? nil : progress
+        self.confirmationCount = confirmationCount
+        self.requiredConfirmations = requiredConfirmations
     }
 }
 
@@ -273,7 +288,9 @@ public actor RecognitionCoordinator {
             guidance: guidance, modeNotice: source ?? activeMode, awaitingVerdict: awaitingVerdict, insight: insight,
             activeMode: activeMode, assessment: assessment,
             textReadiness: readiness, didRunOCR: didRunOCR, advanceNotice: advanceNotice, focusedObject: focusedObject,
-            progress: progress)
+            progress: progress,
+            confirmationCount: result?.visualEvidence?.kind == .cloudSuggestion && awaitingVerdict ? 1 : confirmation.count,
+            requiredConfirmations: result?.visualEvidence?.kind == .cloudSuggestion && awaitingVerdict ? 1 : confirmation.requiredObservations)
     }
     /// Longest read-back quoted in a progress line, so a spoken answer stays short.
     static let progressQuoteLength = 40
@@ -294,7 +311,8 @@ public actor RecognitionCoordinator {
             guidance: update.guidance, modeNotice: update.modeNotice, awaitingVerdict: update.awaitingVerdict,
             insight: update.insight, activeMode: update.activeMode,
             assessment: update.assessment, textReadiness: update.textReadiness, didRunOCR: update.didRunOCR,
-            advanceNotice: ScanDeadline.expiredMessage, focusedObject: update.focusedObject, progress: update.progress)
+            advanceNotice: ScanDeadline.expiredMessage, focusedObject: update.focusedObject, progress: update.progress,
+            confirmationCount: update.confirmationCount, requiredConfirmations: update.requiredConfirmations)
     }
     private func emptyResult(_ image: RecognitionImage, status: ItemRecognitionResult.Status = .noMatch) -> ItemRecognitionResult {
         ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID, matchedItemID: nil,

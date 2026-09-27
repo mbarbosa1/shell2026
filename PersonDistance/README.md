@@ -1,112 +1,123 @@
-# PersonDistance — implementation plan for review
+# PersonDistance
 
-Status: planning only, September 27, 2026. No implementation or device testing has been performed. The user requested review before code is written.
+How far things are from the shopper, measured with the iPhone's LiDAR. Every piece of phone-to-object and hand-to-object distance code in the project lives in this folder. App code (ShellApp) only passes in boxes and points and displays or acts on the results.
 
-## Interim display readout (September 27, 2026, user direction)
+Status, September 27, 2026: steps 1–5 and the self-checkout distance are implemented. They build for iOS device and simulator, and 33 Mac tests pass here (175 in ItemRecognition, 12 for the proxy). **Nothing has been measured on a phone or the cart yet**: the thresholds below are drafts, and step 8 is the test that sets them.
 
-All phone-to-product distance code lives in this folder; UI code only displays its results. One interim piece exists ahead of the plan below: `Package.swift` with the `PersonDistanceIOS` target and `Sources/PersonDistanceIOS/ProductDepthEstimator.swift`. ShellApp (not the Demo) links it and shows the reading on its camera screen, beside the item being looked for ("Looking for Oat milk · 1.2 m"), while `ItemScanner` searches at a stop. It is display-only: nothing is spoken, sent to the watch, or decided from it.
+## What it measures
 
-It follows two rules of this plan: it measures one product only (the object recognition matched, or the object region when exactly one object is in view, never a union of several), and it uses LiDAR scene depth when available (median of medium/high-confidence samples in the middle half of the box, converted from camera-plane depth to straight-line range with the camera intrinsics). Without scene depth (no LiDAR, or no depth on that frame) it falls back to an ARKit raycast against estimated surfaces, which this plan leaves out of scope.
+| Measurement | From → to | Starts | Ends | Used for |
+|---|---|---|---|---|
+| **Product distance** | Rear camera → the product | When the shopper says **Yes** to "Is this Oat milk?" | Pickup done, No, product lost, or shopping ends | Pointing the arm at the product; the "From camera" pill |
+| **User distance (hand → product)** | The shopper's fingertip → the product | When the arm has centered on the product and hand guiding starts | "Got it", or pickup stops | "Reach further" and the 3D "got it" on the watch |
+| **Self-checkout distance** | Rear camera → the self-checkout machine | As soon as the machine is recognized (no Yes: the shopper can't be asked "Is this the self checkout?") | Reached, lost, or the route ends | "Self checkout on your right, 2 meters" and the reached cue |
 
-Not yet met: it measures before automatic confirmation; scene depth is enabled when the camera starts rather than after confirmation; it reads ARKit's latest frame instead of the frame recognition checked, so the box can be a fraction of a second old; there is no `PersonDistanceCore`, target tracking, validity policy, watch guidance, or tests. Verified only by unsigned iOS device and simulator builds of ShellApp; no device measurement yet.
+**User distance** is the hand-to-product option. HandGuide (ShellApp) finds the index fingertip with Apple Vision's hand pose detection. PersonDistance reads the LiDAR depth at that fingertip and compares it with the product's position, which is frozen in world coordinates just before the hand covers it. The result is a `HandSample`:
 
-## Confirmed requirements
+- **meters**: straight-line distance from the fingertip to the product.
+- **gap**: how far the product is behind the fingertip, along the camera's view. A positive gap means the hand is lined up but hasn't reached the product yet.
 
-- Measure only after automatic product identification is confirmed; shopper acceptance is not the trigger.
-- Use phone-to-product distance only.
-- Deliver guidance through Apple Watch vibrations only; no spoken guidance.
-- Do not require the shopper to hold the phone in the opposite hand or keep the grasping hand visible.
-- Agreed endpoint: guide toward the product; the shopper completes the grasp by touch.
-- Phone: iPhone 18 Pro. Watch candidates: Apple Watch Series 5 or the latest model. Installed OS versions and the watch to use first remain unknown.
-- Choose the near-phone stopping distance during the first supervised calibration.
+`HandReachPolicy` turns that into "touching" (gap within 5 cm), "reach further" (more than 5 cm short), or "can't tell" (no confident depth at the fingertip). "Got it" needs "touching" for about half a second. A hand that only covers the product on screen is not enough.
 
-## Agreed scope and spatial meaning
+## Setup this is built for
 
-These sensing constraints support product localization relative to the camera and phone-to-product distance feedback. They do not provide the position of an unseen hand. Even perfect phone distance cannot tell whether a hand is above, below, behind, or beside the product, whether its path is clear, or whether fingers have closed around it.
+- **Phone:** iPhone 18 Pro, which has LiDAR, in a pan/tilt clamp on the cart (`ArmController`, three servos). The phone doesn't move with the shopper, so phone distance is not the shopper's distance. That's why the user-distance option measures the hand.
+- **App:** ShellApp, with cues on the existing ShellWatch app. The ItemRecognition Demo is not a target.
+- **Scene depth** is checked at runtime (`supportsFrameSemantics(.sceneDepth)`). Without LiDAR there is no distance at all, rather than a guessed one: the raycast fallback was removed.
+- **Watch:** Apple Watch Series 5 is not on the watchOS 27 compatibility list. Test Series 5 and a current watch as separate cases before claiming either.
 
-The user resolved this distinction by choosing guidance toward the product with manual grasp by touch. The plan does not assume that watch motion sensors or radio ranging supply product-relative fingertip position.
+## Decisions (user, September 27, 2026)
 
-Provide product-relative phone alignment/proximity cues, followed by a distinct near-product stop cue. The shopper finishes the grasp by touch. Explicit collection confirmation is the proposed way to mark the task complete; its input method remains to be settled. No command may claim “move your hand left” or “close your fingers now” from phone distance alone.
+1. **Trigger:** product distance starts at the shopper's **Yes**, not at recognition's automatic confirmation. Recognition's "settle after one frame" rule has not been validated for starting guidance without a person's check. The product is only *followed* (tracked) while the question is asked.
+2. **User distance = hand to product**, as above.
+3. **Collected:** an item is checked off when the fingertip reaches it in 3D. The watch plays success and the next item starts. Saying "check it off" still works.
+4. **Pickup guidance:** the existing hand cues (left, right, up, down, got it), plus one new watch cue, **"reach further"** (`handForward`, WKHapticType `.retry`, repeating like the other hand directions).
+5. **Self-checkout:** the machines are along the **Entrance ↔ Turn 1** walkway (7.48 m, store-walk calibration), on the **right** when walking from Turn 1 toward the entrance. Every route now ends by driving that row. This replaces the old 58.86 m "Cashier" end, whose map position was a guess.
+6. **Self-checkout recognition:** Gemini (the existing cloud proxy, new `/v1/self-checkout` endpoint) is **primary**. Apple Vision is the fallback when the proxy isn't set up, fails, or times out. The fallback reads sign and screen text ("Self Checkout", "Scan", "Pay") and uses the classifier labels `atm`, `computer_monitor` and `machine` as support. Apple Vision's 1,303 labels include no checkout, register or kiosk label. Recognition lives in ItemRecognition (`Landmarks/`); only the distance is here.
 
-Remaining implementation-review decisions: exact watch/OS and active-app behavior; automatic-confirmation reliability policy; vibration vocabulary/training; accessible stop and collection controls. Automatic confirmation and supervised distance calibration are now approved requirements. No further shopper confirmation is required to start measuring.
+## Rules
 
-## Hardware verification
+- **One object only:** the product recognition matched, or the only object in view, never a region around several.
+- **Same frame:** a box and the depth it's measured in always come from the same `ARFrame` (`CameraSnapshot`). The frame is copied off `ARFrame` at once, because holding frames stalls ARKit.
+- **Coordinates:** every box and point passed in is in ARKit's landscape `capturedImage` pixels from the top left. App code converts from Vision's upright coordinates with ItemRecognition's `VisionRegionOfInterest`.
+- **LiDAR only while measuring:** `ProductRangeSession` adds `.sceneDepth` to the running configuration without reset options, and removes it when it stops. The camera service never turns it on. There is one `ProductRangeSession` per app; pickup and the self-checkout finder never run at the same time.
+- **No reading beats a wrong one:** `SpatialValidityPolicy` rejects readings with little confident depth, disagreeing depths, or old frames.
+- **No hand claims from phone distance:** hand advice comes only from the fingertip's own depth. Without it, pickup falls back to on-screen (2D) guidance and says so on screen.
 
-The user confirmed iPhone 18 Pro. Apple lists a LiDAR Scanner in the [iPhone 18 Pro/Pro Max specifications](https://www.apple.com/iphone-18-pro/specs/). Use the LiDAR scene-depth design and still check `ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)` at runtime. [ARKit scene depth](https://developer.apple.com/documentation/arkit/arconfiguration/framesemantics-swift.struct/scenedepth) requires LiDAR. Non-LiDAR support is outside this first implementation.
+## How it runs
 
-The latest standard watch listed by Apple at review time is [Series 12](https://www.apple.com/watch/). Series 5 is absent from the [watchOS 27 compatibility list](https://www.apple.com/os/watchos/); do not set a deployment target that excludes it while claiming support. Before choosing a shared deployment baseline, verify the actual Series 5 software, pairing with the specific iPhone/OS, current Xcode installation/deployment support, and signed installation. Latest-watch support and Series 5 support are separate device test cases. Existing haptic and connectivity APIs are candidate building blocks, not proof that this exact device pair has been validated.
+**At each stop** (ShellApp `ItemScanner` + `PickupGuide`):
 
-## Existing code path and integration gaps
+1. The arm sweeps the shelf: the map's side when known, otherwise left then right. Recognition looks for the item.
+2. Recognition asks "Is this Oat milk?". The arm holds, and `ProductRangeSession.follow` tracks the one matched product with Vision object tracking.
+3. **Yes:** `measure` turns LiDAR on. The arm centers on the tracked box.
+4. Centered: `anchorProduct` freezes the product's world position from the latest valid reading and stops tracking, since the hand is about to cover it.
+5. Hand guiding: each check takes one `CameraSnapshot`. HandGuide finds the fingertip, and PersonDistance gives the `HandSample`. The watch plays left, right, up or down until the hand is lined up, then "reach further" until it touches.
+6. Touching for about 0.5 s: "Got it." The item is checked off, LiDAR goes off, and the next item starts. If the product is lost before anchoring, the item is looked for again.
 
-The running recognition app is `ItemRecognition/Demo/ItemRecognitionDemo.xcodeproj`; the two ShellApp projects are not the initial integration target.
+Tester test scans (Trials screen) stop at the validated Yes and skip pickup. With no single product box, or no LiDAR, a Yes checks the item off straight away, as before pickup was connected.
 
-| Existing file | Current behavior | Planned change |
-|---|---|---|
-| `ItemRecognition/Demo/Sources/ScanModel.swift` | `confirmInsight()` requests shopper acceptance and immediately stops capture. | Add the automatic-confirmation transition into distance acquisition, retaining the camera. |
-| `ItemRecognition/Demo/Sources/DemoCameraCapture.swift` | Owns AVCaptureSession and discards the returned shopper-acceptance observation. | Deliver a distinct automatic target handoff and replace capture with one ARKit source in the integrated demo. |
-| `ItemRecognition/Sources/ItemRecognition/Extraction/RecognitionCoordinator.swift` | Machine `.confirmed` settles into an awaiting-shopper state; `acceptInsight()` returns ItemObservation once and stops recognition. | Add an explicit automatic-confirmation handoff contract for this mode, including identity and spatial evidence; preserve shopper-acceptance meaning elsewhere. |
-| `ItemRecognition/Sources/ItemRecognition/Catalog/ItemRecognitionResult.swift` | ItemObservation contains identity and timestamp but no target rectangle. | Keep identity separate from a new spatial handoff record. |
-| `ItemRecognition/Demo/Sources/CameraDemoView.swift` | Displays AVCapture preview and recognition controls. | Use AR preview and provide guidance lifecycle controls. |
+**After the last item** (`RouteNavigator` + `CheckoutFinder`): the route drives Turn 1 → Entrance ("Turn …, then go straight 7 meters past the self checkouts, on your right"). The arm looks ahead and to the right (`ArmController.lookoutPoses`). Every 0.7 s a frame, copied down to 960 px so ARKit's buffer isn't held during the call, goes to Gemini first. Apple Vision answers when Gemini isn't set up or fails, and for 10 s of camera time after a failure. Once a machine is sighted, `measureNow` follows and measures it, and the shopper hears "Self checkout on your right", then "about 3 meters" when the distance changes. At 1.5 m or closer, "You've reached the self checkout" ends the trip. If the row ends first, the shopper hears either "The self checkout is right here, on your right" (it was seen) or that none was found and to ask staff.
 
-A machine result named `.confirmed` currently asks the shopper for acceptance; it is not their final acceptance. The user now requires that automatic confirmation trigger measurement in PersonDistance mode. Add an explicit automatic handoff rather than pretending the shopper called `acceptInsight()`. Preserve the accepted-by-shopper semantics for other consumers and baseline reporting. One event per target/session must transition the pipeline; repeated settled updates must not restart guidance.
+## Where the app uses it
 
-The current OCR policy can ask after one qualifying frame because shopper acceptance was its final check. Do not assume that policy is already validated for automatic movement guidance. Review temporal consistency, target-versus-neighbor margin, and fresh physical-target association before enabling automatic guidance; calibrate that policy using device trials. The first test uses one exact packaged product. A `.category` produce result does not confirm an exact SKU or one physical item and must not automatically start exact-product guidance. Category-level shopping targets would need a separate explicit contract.
-
-`RecognitionUpdate.focusedObject` covers certain multi-object OCR results only. `assessment.objectRegion` may be a union of objects. Define one explicit physical target with its source-frame coordinates. Do not use a text crop, full frame, or produce-bin union as an individual product surface. A produce category match needs an additional individual-target selection step.
-
-## Planned files under PersonDistance
-
-Only this README exists. Proposed implementation files:
-
-| Location | Responsibility |
+| App file | Uses |
 |---|---|
-| `Package.swift` | Portable contracts plus a separate iOS-only ARKit target. |
-| `Sources/PersonDistanceCore/ConfirmedTarget.swift` | Item ID, recognition session, match level, frame timestamp, rectangle, resolution, orientation. |
-| `Sources/PersonDistanceCore/DistanceSample.swift` | Camera-to-product range, selected surface, age, quality, and validity. |
-| `Sources/PersonDistanceCore/SpatialValidityPolicy.swift` | Target association, freshness, confidence, and abstention rules. |
-| `Sources/PersonDistanceCore/GuidanceCoordinator.swift` | Confirmation gate, state transitions, cancellation, near threshold, and hysteresis. |
-| `Sources/PersonDistanceCore/GuidanceMessage.swift` | Shared iPhone/watch message schema. |
-| `Sources/PersonDistanceIOS/ARCameraSource.swift` | Own the ARSession and timestamped frames. |
-| `Sources/PersonDistanceIOS/ConfirmedObjectTracker.swift` | Maintain the same physical target across frames. |
-| `Sources/PersonDistanceIOS/ProductDepthEstimator.swift` | Map the selected surface to scene depth and calculate range. |
-| `Sources/PersonDistanceIOS/WatchGuidanceSender.swift` | Live connectivity, acknowledgments, and stale-message control. |
-| `WatchApp/` | Receiver, vibration vocabulary, stop/collection controls, and training interaction. |
-| `Tests/` | Confirmation, geometry, target identity, state, and messaging checks. |
+| `UI/ShellApp/ShellApp/Recognition/ItemScanner.swift` | `follow` on the question, `measure` on Yes; checks the item off when pickup finishes |
+| `UI/ShellApp/ShellApp/PickupGuide.swift` | `box` to center the arm, `anchorProduct()`, `CameraSnapshot` and `handSample(at:in:)` for each hand check, `HandReachPolicy` |
+| `UI/ShellApp/ShellApp/HandGuide.swift` | Finds the fingertip on screen (Vision hand pose); no distance code |
+| `UI/ShellApp/ShellApp/Recognition/CheckoutFinder.swift` | `measureNow` for the self-checkout, `sample` for the spoken distance |
+| `UI/ShellApp/ShellApp/CameraScreen.swift` | Pills: "From camera", "Hand to item", "Self checkout" |
+| `ItemRecognition/Sources/ItemRecognition/Landmarks/` | Self-checkout recognition (Gemini first, Apple Vision fallback); no distance code |
+| `ItemRecognition/CloudProxy/server.py` | `POST /v1/self-checkout` for Gemini |
+| `UI/ShellApp/ShellWatch/WatchReceiver.swift` | The "reach further" cue (`handForward`, `.retry`) |
 
-No hand-tracking or automatic grasp planner is included under the phone-only constraint. A companion watchOS app target, bundle association, signing, and deployment configuration must be added to the demo project. A package folder alone does not create an installable watch app. The shared target must not import ARKit or the iOS recognition package.
+## Files
 
-## Step-by-step implementation and first test
+| File | What it does |
+|---|---|
+| `Sources/PersonDistanceCore/DistanceSample.swift` | One product reading: meters, depth coverage, depth spread, frame time |
+| `Sources/PersonDistanceCore/DepthGeometry.swift` | Depth window, median/coverage/spread, off-axis range, 3D points, box conversions |
+| `Sources/PersonDistanceCore/SpatialValidityPolicy.swift` | Which product readings are good enough |
+| `Sources/PersonDistanceCore/MeasurementGate.swift` | Follow on the question, measure only after Yes |
+| `Sources/PersonDistanceCore/HandReach.swift` | `HandSample` and `HandReachPolicy` (touching, reach further, can't tell) |
+| `Sources/PersonDistanceIOS/ProductDepthEstimator.swift` | `CameraSnapshot`, and a product's LiDAR reading in it |
+| `Sources/PersonDistanceIOS/ConfirmedProductTracker.swift` | Vision object tracking of the confirmed product |
+| `Sources/PersonDistanceIOS/ProductRangeSession.swift` | The one object apps use: follow, measure, anchor, hand samples, LiDAR on/off |
+| `Tests/PersonDistanceCoreTests/` | Geometry, validity, gate and hand-reach tests (run on a Mac: `swift test`) |
 
-1. **Finalize the remaining interaction choices.** Use the agreed iPhone 18 Pro, automatic recognition confirmation, supervised near-phone calibration, and manual-grasp endpoint. Identify the watch/OS, automatic-confirmation reliability policy, and collection-confirmation input. Define phone proximity independently of hand reach. No claim of grasp detection follows from small phone range.
+`PersonDistanceCore` imports no ARKit, so its tests run on a Mac. `PersonDistanceIOS` only compiles for iOS.
 
-2. **Define the state model.** Recognizing → automatically confirmed → acquiring target → measuring → valid proximity feedback → near-phone threshold → manual grasp → awaiting explicit collection confirmation → completed. There is no shopper-verdict wait before measurement. Include paused, cancelled, and unsupported states. Every target/session change invalidates old frames, samples, and watch messages.
+## Draft thresholds (set them from the bench test)
 
-3. **Use one ARKit camera owner.** Start world tracking for RGB recognition/preview. Keep scene-depth semantics disabled before automatic confirmation and also gate all product-range calculation. Feed ARFrame.capturedImage to RecognitionImage with the actual orientation. The old AVCapture path physically rotates buffers and uses `.up`; do not copy that assumption. Validate focus/blur handling, format, buffer ownership, camera permission, interruptions, and backpressure. Do not run a competing AVCaptureSession.
+| Setting | Draft | Where |
+|---|---|---|
+| Minimum confident depth over the product | 30% of the box's middle half | `SpatialValidityPolicy.minimumCoverage` |
+| Largest depth spread over one face | 8 cm (25th–75th percentile) | `SpatialValidityPolicy.maximumSpread` |
+| Oldest usable frame | 0.5 s | `SpatialValidityPolicy.maximumAge`, `HandReachPolicy.maximumAge` |
+| Product lost after | 1 s unseen | `ProductRangeSession.lostAfter` |
+| Touching | fingertip within 5 cm of the product's depth | `HandReachPolicy.touchingGap` |
+| Self-checkout reached | 1.5 m from the camera | `CheckoutFinder.reachedMeters` |
 
-4. **Make the automatic handoff atomic.** Store the confirmed result's identity, match level, selected physical region, and session/frame identity in one handoff record. Deliver it once only after the agreed automatic-confirmation policy passes. Reject category-only, wrong-target, or obsolete results for an exact-product request. End or suspend recognition through an explicit automatic handoff, without recording fictitious shopper acceptance. Separate the recognition trial's machine-confirmed outcome from collection and camera stopping. Stop submitting recognition work to a stopped coordinator.
+## Status by step
 
-5. **Acquire the confirmed object in a current frame.** Maintain RGB continuity through recognition and depth startup. Use [Vision object tracking](https://developer.apple.com/documentation/vision/vntrackobjectrequest) plus identity/continuity checks. If the selected item was lost or ambiguously replaced by a neighbor, pause and repeat automatic confirmation. Do not apply an old recognition rectangle to new depth data.
+| Step | What | Status |
+|---|---|---|
+| 1 | Core target and tests | Done (`9c04ac1`); 21 Mac tests |
+| 2 | Same-frame measuring, no frozen reading | Done (`9c04ac1`) |
+| 3 | Measure only after Yes; LiDAR only while measuring | Done (`9c04ac1`) |
+| 4 | Hand-to-product distance (user distance) | Implemented; 12 new Mac tests; not measured on a phone |
+| 5 | Pickup connected: sweep, center, hand guidance, check-off on touch | Implemented; builds; not run on the cart |
+| — | Self-checkout: route end, recognition (Gemini first), distance, guidance | Implemented; 14 recognition tests and 6 proxy tests; not run in the store |
+| 6 | Watch cues | Partly: "reach further" added with step 5 (type-checked for watchOS); proximity pulses not planned yet |
+| 7 | README | This file |
+| 8 | Phone and cart bench test | Not started (needs the cart and the store) |
 
-6. **Enable and validate product depth.** Check support, then enable `.sceneDepth` without intentionally resetting tracking. Map current target coordinates into the same ARFrame's depth/confidence buffers. Handle image orientation, depth resolution, and preview cropping separately. Use interior samples belonging to the selected visible product surface; reject low-confidence, nonfinite, edge, background, and occluder samples. Refrain from calculating a usable range if association is ambiguous.
+## Bench test (step 8, on the cart)
 
-   Unproject using correctly scaled camera intrinsics and compute Euclidean camera-to-surface range. Raw depth is distance from the camera plane and differs from off-axis range. Use robust sample aggregation and limited temporal smoothing; clear history after target changes or loss. Apple's [ARDepthData documentation](https://developer.apple.com/documentation/arkit/ardepthdata) defines depth/confidence maps. Spatial validity uses association, depth confidence, spread, freshness, and tracking stability. Recognition score is not depth accuracy, and raw confidence scores from different APIs are not interchangeable probabilities.
-
-7. **Derive only supported feedback.** Range supplies proximity. The target's image position additionally supplies camera-relative alignment; neither establishes a hand/body-relative direction. Do not require a particular hand posture, but the rear camera must still see the product. A configurable near-phone threshold must be named as such, not “within hand reach.” Use hysteresis and expire measurements. Occlusion, tracking loss, or invalid depth pauses feedback. Distance to a product does not establish a clear walking route.
-
-8. **Connect the watch.** Activate WCSession on both devices and check installation, pairing, activation, and reachability. Send session ID, sequence, target ID, cue, sample age, and expiry information. Use one replaceable latest update rather than a camera-rate backlog. Validate freshness with acknowledgments and a measured latency/clock-handling protocol; independent monotonic clocks cannot be compared directly. Discard duplicates and previous sessions. Do not replay live guidance via deferred background transfers. See Apple's [sendMessage documentation](https://developer.apple.com/documentation/watchconnectivity/wcsession/sendmessage(_:replyhandler:errorhandler:)).
-
-9. **Develop vibration-only feedback.** Provide no spoken guidance. Prototype distinguishable proximity and pause/completion cues with the system haptics and cadence limits; do not promise arbitrary motor strength. Faster pulses, if chosen, indicate decreasing phone range only. Stop and success retain their task meanings; success requires explicit collection confirmation. Any camera-alignment vocabulary needs learned, unambiguous meanings and user testing before it directs motion. Do not claim a single wrist actuator naturally communicates spatial direction. See [WKHapticType](https://developer.apple.com/documentation/watchkit/wkhaptictype).
-
-   Verify the watch can remain active in the shopper's actual posture. Apple's [play(_:) documentation](https://developer.apple.com/documentation/watchkit/wkinterfacedevice/play(_:)) restricts background/inactive playback. Do not promise a stop vibration after communication or app activity is lost. Train bounded action per movement cue, followed by stopping and waiting; silence never means keep moving. Resume only with fresh valid state. Provide accessible stop and collection actions without introducing spoken guidance as a hidden dependency. Product identification is confirmed automatically.
-
-10. **Run focused software checks.** Cover no estimates/cues before automatic confirmation; candidate/no-match/category-only results; duplicate machine-confirmed updates; wrong/stale session handoff; object switching; stale coordinates; portrait/landscape transforms; off-axis range; missing/mixed depth; hysteresis; interrupted capture; expired/reordered messages; disconnect/inactivity; and cancellation. Assert no shopper action is needed to start measurement and no false shopper-acceptance event is logged. Assert phone proximity never produces automatic hand-position, contact, or grasp claims. Build the recognition package, iOS demo, and watch targets for the agreed deployment versions.
-
-11. **First physical bench test.** Use one opaque package in a well-lit uncluttered scene. Measure rear-camera-to-selected-surface reference distances, for example 1.0 m, 0.75 m, and 0.5 m. These are measurement points, not grasp or stop thresholds. First test randomized vibration recognition without motion, then automatically confirmed-target distance feedback. Record error, valid-sample coverage, latency, cue timing, and target identity. A proposed range target for review is at least 90% of valid samples within 10 cm at these points; it is not a validated accuracy claim or a grasp tolerance. Select and save the near-phone threshold with the shopper during supervised calibration, accounting for phone posture, measured error, cue delay, and room to stop; do not assume one phone distance establishes reachability in all postures.
-
-   Verify zero product-range calculations before automatic confirmation and automatic startup afterward without an Accept tap. Vary distance and camera angle; occlude the product, introduce a similar neighbor, rotate the phone, lower the wrist, deactivate/disconnect the watch, and cancel. Freshness and pause behavior must remain correct. Test Series 5 and a current watch separately if both are supported. After cue comprehension and geometry checks pass, run a supervised complete trial: recognize automatically, approach an unobstructed product using the agreed cues, receive the calibrated near-phone stop cue, finish grasping by touch, and confirm collection. No hand tracking or automatic grasp detection is claimed.
-
-## Runtime path
-
-Demo app → ScanModel.start → ARCameraSource RGB frames → RecognitionCoordinator.submit → automatic exact-product confirmation → confirmed identity plus spatial target → fresh target acquisition → same-frame product depth → validity policy → phone proximity/alignment state → WatchConnectivity → active watch receiver → vibrations → calibrated phone-near stop cue → manual grasp by touch → collection confirmation.
-
-The endpoint, automatic trigger, iPhone variant, vibration-only output, and supervised distance-calibration approach are agreed. Watch deployment, confirmation reliability settings, vibration vocabulary, and collection controls remain implementation-review details. Awaiting plan review; no code changes or tests performed.
+1. **Product distance:** one opaque package, well lit, at 1.0, 0.75 and 0.5 m from the rear camera, measured with a tape. Record the reading, the depth coverage and spread, and the latency. Proposed target, not yet approved: 90% of valid readings within 10 cm.
+2. **Trigger:** confirm no reading and no LiDAR before Yes, and that a reading appears after Yes without another tap.
+3. **Hand:** reach slowly toward the product. "Reach further" should play until the fingertip touches, and "got it" only when it does. Hover 10–20 cm in front: there must be no "got it". Try a sleeve, a glove, and a hand coming in from the side.
+4. **Tracking:** move the cart a little while "Is this …?" is asked. Occlude the product, and put a similar neighbor beside it.
+5. **Self-checkout:** drive Turn 1 → Entrance with and without the proxy running. Note where it's first sighted, the spoken distance, and the reached point.
+6. **Session:** after enabling and disabling LiDAR mid-walk, check that navigation tracking doesn't jump. Watch battery and heat over a full trip.

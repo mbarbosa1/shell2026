@@ -291,7 +291,7 @@ final class VoiceAgent {
             return ("Saved list \(finished.number) to History and started list \(model.currentList.number).", false)
 
         case "open_camera", "open_camera_or_close":
-            // Only opens: the camera closes at the cashier or with the X on screen.
+            // Only opens: the camera closes at the self checkout or with the X on screen.
             return ("Camera opened. Let's start shopping." + Self.notInCatalog(model.startShopping()), false)
 
         case "analyze_current_frame":
@@ -304,7 +304,7 @@ final class VoiceAgent {
             return model.answerScan(false) ? ("Okay, the camera will keep looking.", false) : ("Cancelled.", false)
 
         case "close_camera":
-            return ("The camera stays on until you reach the cashier. "
+            return ("The camera stays on until you reach the self checkout. "
                 + "To leave early, tap the close button in the top right corner.", true)
 
         case "next_page":
@@ -324,6 +324,17 @@ final class VoiceAgent {
     }
 
     private func checkOff(_ name: String) -> (message: String, isError: Bool) {
+        if model.isCameraOpen, model.scanner.isTestScan {
+            let said = Set(ProductMatcher.words(name))
+            guard let target = model.scanner.target, !said.isEmpty,
+                  said.isSubset(of: ProductMatcher.words(target.name)) || said.isSubset(of: ProductMatcher.words(target.productTitle)) else {
+                return ("This test is for the selected scan item. The shopping list has not changed.", true)
+            }
+            guard model.answerScan(true) else {
+                return ("There is no recognition suggestion to validate yet. \(model.scanner.diagnostics.explanation)", true)
+            }
+            return ("Validating the scan for \(target.name). This test leaves the shopping list unchanged.", false)
+        }
         switch model.checkOffItem(named: name, source: .voice) {
         case .checkedOff: return ("Checked off \(name).", false)
         case .alreadyInCart: return ("\(name) is already in the cart.", false)

@@ -11,11 +11,13 @@ import PersonDistanceIOS
 /// by the meters `progress` reports, and off everywhere else, so no frame is looked at on the way
 /// to a stop. Items are looked for one at a time, in the order given.
 ///
-/// Once the camera settles on the item, the user is asked "Is this Oat milk?". Yes hands it to the
-/// arm and hand guide (`pickUp`) when they're set up, and it goes in the cart (`found`) once the
-/// hand reaches it; otherwise yes puts it straight in the cart. No keeps looking. While looking, a hint like "Move more to the left" is said when
-/// it changes, at most every `hintInterval`. Everything goes out through `announce`: spoken, and
-/// played on the watch.
+/// While it looks, the arm faces the item's shelf (`targetChanged`, then `AppModel` turns it). Once
+/// the camera settles on the item, the user is asked "Is this Oat milk?". No keeps looking. Yes
+/// starts PersonDistance measuring it, and pickup turns the arm onto it and guides the hand; the
+/// item goes in the cart (`found`) once the fingertip reaches it (user decision, September 27,
+/// 2026). While looking, a hint like "Move more to the left" (or, facing a shelf, "Push the cart
+/// forward a little") is said when it changes, at most every `hintInterval`. Everything goes out
+/// through `announce`: spoken, and played on the watch.
 @MainActor
 @Observable
 final class ItemScanner {
@@ -25,9 +27,11 @@ final class ItemScanner {
     private(set) var question: String?
     /// The latest hint, e.g. "Move closer to the item". Nil when there's nothing to fix.
     private(set) var hint: String?
-    /// Meters from the phone to the product in view, from PersonDistance, for the camera screen.
-    /// Nil with no single product in view or no reading. Only shown; nothing is decided by it.
-    private(set) var objectMeters: Double?
+    /// The item the user said Yes to while pickup guides their hand to it. Recognition is over
+    /// for it; it goes in the cart when pickup finishes.
+    private(set) var pickingUp: ScanTarget?
+    private(set) var diagnostics = ScanDiagnostics()
+    private(set) var isTestScan = false
 
     /// How far past the end of a stop's lane the camera keeps looking.
     static let margin = 1.5
@@ -37,6 +41,11 @@ final class ItemScanner {
     @ObservationIgnored var announce: (String, WatchHaptic?) -> Void = { _, _ in }
     /// Puts the list item with this id in the cart. Set by `AppModel`.
     @ObservationIgnored var found: (UUID) -> Void = { _ in }
+    /// PersonDistance: follows the product asked about, and measures its distance once the shopper
+    /// says Yes (never before). Set by `AppModel`.
+    @ObservationIgnored var range: ProductRangeSession?
+    /// Turns the arm onto the product and guides the hand after a Yes. Set by `AppModel`.
+    @ObservationIgnored var pickup: PickupGuide?
     /// Called with each new item looked for, and nil when there's none, so the arm can turn to
     /// its shelf. Set by `AppModel`.
     @ObservationIgnored var targetChanged: (ScanTarget?) -> Void = { _ in }
@@ -44,20 +53,21 @@ final class ItemScanner {
     /// ahead and behind along the shelf, so those hints tell the user to push or pull the cart.
     /// Set by `AppModel`.
     @ObservationIgnored var facing = StoreMap.Side.ahead
-    /// Hands the confirmed item to the arm and hand guide (`PickupGuide.track`), with where it is in
-    /// the frame. The scanner pauses until `pickUpEnded`. Set by `AppModel`.
-    @ObservationIgnored var pickUp: ((CGRect) -> Void)?
-    /// Measures `objectMeters`. Set by `AppModel`.
-    @ObservationIgnored var depth: ProductDepthEstimator?
     /// Baseline trials in tester mode: every item scan is one. It also holds the OCR language
     /// correction setting the next item uses. Set by `AppModel`.
     @ObservationIgnored var trials: TrialRecorder?
     /// A real walk, or a tester's test scan (which never touches the list).
     @ObservationIgnored private var mode = TrialRecorder.Mode.walk
     @ObservationIgnored private var queue: [ScanTarget] = []
+    /// Where the item was last seen in the frame, in Vision coordinates (0–1, origin at the bottom
+    /// left, in the upright image): the box PersonDistance follows.
+    @ObservationIgnored private var productBox: CGRect?
     /// Meters past the reference node, or nil before it; and whether tracking can be trusted.
     @ObservationIgnored private var progress: () -> (meters: Double?, reliable: Bool) = { (nil, false) }
     @ObservationIgnored private var coordinator: RecognitionCoordinator?
+    @ObservationIgnored private var produceClassifier: ProduceCategoryClassifier?
+    @ObservationIgnored private var latestFrameTime: TimeInterval?
+    @ObservationIgnored private var answering = false
     /// Bumped for every new target, so work for an old one is dropped.
     @ObservationIgnored private var run = 0
     /// A frame is being looked at. Frames that arrive meanwhile are dropped (see `PositionTracker.onFrame`).
@@ -65,17 +75,13 @@ final class ItemScanner {
     @ObservationIgnored private var spokenHint: String?
     @ObservationIgnored private var spokenAt: TimeInterval = -.infinity
     @ObservationIgnored private var toldToMoveOn = false
-    /// Where the item was last seen in the frame, in Vision coordinates (0–1, origin at the bottom
-    /// left, in the upright image), for `pickUp`.
-    @ObservationIgnored private var productBox: CGRect?
-    /// Between a yes and `pickUpEnded`: the hand guide has the camera, so frames aren't looked at.
-    @ObservationIgnored private var isPickingUp = false
 
     /// Starts looking for `targets`: at the stop just reached on a walk, or right away for a test scan.
     func begin(_ targets: [ScanTarget], mode: TrialRecorder.Mode = .walk,
                progress: @escaping () -> (meters: Double?, reliable: Bool)) {
         queue = targets
         self.mode = mode
+        isTestScan = mode == .testScan
         self.progress = progress
         next(announcing: false)
     }
@@ -83,6 +89,8 @@ final class ItemScanner {
     /// Tester bar: saves the trial in progress and stops looking for this item until `restartTarget()`.
     func stopTrial() {
         stopTarget()
+        diagnostics.status = "Stopped · last results retained"
+        diagnostics.note("Trial stopped")
     }
 
     /// Tester bar: looks for the same item again, as a new trial.
@@ -99,6 +107,7 @@ final class ItemScanner {
         stopTarget()
         target = nil
         targetChanged(nil)
+        isTestScan = false
     }
 
     /// Call when the list changes. Moves on when the item being looked for is in the cart or gone.
@@ -110,33 +119,70 @@ final class ItemScanner {
 
     /// The user's answer to `question`.
     func answer(_ yes: Bool) {
-        guard question != nil, let target, let coordinator else { return }
+        guard !answering, question != nil, let target, let coordinator else { return }
+        // Test scans validate the actual receipt before reporting success, and do
+        // not enter the shopping arm/hand-pickup flow.
+        if isTestScan && yes {
+            answering = true
+            let run = run
+            Task {
+                let receipt = await coordinator.acceptInsight()
+                guard run == self.run else { return }
+                answering = false
+                guard let receipt else {
+                    question = nil
+                    diagnostics.error = "This suggestion expired. Start a new trial before validating."
+                    diagnostics.note("Acceptance failed: no recognition receipt")
+                    return
+                }
+                trials?.finish(.accepted)
+                stopTarget()
+                diagnostics.receipt = receipt
+                diagnostics.status = "Scan validated"
+                diagnostics.note("Validated by shopper · \(receipt.matchLevel.rawValue)")
+                announce("Scan validated for \(target.name).", nil)
+            }
+            return
+        }
         question = nil
         if yes {
             trials?.finish(.accepted)
+            range?.measure(target.listItemID)
             Task { await coordinator.acceptInsight() }
-            if let pickUp, let productBox {
-                isPickingUp = true
-                hint = nil
-                pickUp(productBox)
+            if let pickup, range?.status == .measuring {
+                // In the cart once the hand reaches it (`pickupFinished`), not now.
+                pickingUp = target
+                pickup.centerOnProduct()
             } else {
-                finish(target)
+                // Nothing to guide the hand to: no single product box, or no LiDAR.
+                picked(target)
             }
         } else {
+            answering = true
+            run += 1 // Drop a pending settled update from before the user's No.
+            let run = run
+            diagnostics.note("Shopper rejected suggestion; looking again")
             trials?.rejected()
-            Task { await coordinator.rejectInsight() }
+            range?.stop()
+            Task {
+                await coordinator.rejectInsight()
+                guard run == self.run else { return }
+                answering = false
+                diagnostics.latest = nil
+                diagnostics.status = "Scanning"
+            }
             announce("Okay, still looking for \(target.name).", nil)
         }
     }
 
-    /// The hand guide is done with the item `pickUp` handed it: the hand reached it, or the arm
-    /// lost it first and it's looked for again.
-    func pickUpEnded(reached: Bool) {
-        guard isPickingUp, let target else { return }
-        isPickingUp = false
-        if reached {
-            finish(target)
-        } else {
+    /// `PickupGuide` finished with the item the user said Yes to. Lost: look for it again.
+    func pickupFinished(_ outcome: PickupGuide.Outcome) {
+        guard let target, pickingUp?.listItemID == target.listItemID else { return }
+        pickingUp = nil
+        switch outcome {
+        case .pickedUp:
+            picked(target)
+        case .lost:
             announce("Lost \(target.name). Looking again.", nil)
             queue.insert(target, at: 0)
             next(announcing: false)
@@ -146,7 +192,14 @@ final class ItemScanner {
     /// A camera image from ARKit. The phone is mounted upright, so ARKit's landscape image is turned
     /// a quarter turn right. Frames taken while the lens refocuses aren't counted as evidence.
     func receive(_ buffer: CVPixelBuffer, at time: TimeInterval, isAdjustingFocus: Bool) {
-        guard !busy, !isPickingUp, let coordinator, let target else { return }
+        latestFrameTime = time
+        if trials?.isEnabled == true, diagnostics.isRunning {
+            diagnostics.receivedFrames += 1
+            diagnostics.lastFrameAt = Date()
+            if busy { diagnostics.busyFrames += 1 }
+        }
+        // During pickup recognition is over for the item: its coordinator stopped at the Yes.
+        guard !busy, !answering, pickingUp == nil, let coordinator, let target else { return }
         let (meters, reliable) = progress()
         let context = RecognitionContext(
             targetItemID: target.catalog.targetID,
@@ -161,25 +214,29 @@ final class ItemScanner {
         let run = run
         Task {
             defer { busy = false }
+            let started = Date()
             let update: RecognitionUpdate
             do {
                 update = try await coordinator.submit(context, image: image)
             } catch {
                 print("📷 Recognition failed for \(target.name): \(error.localizedDescription)")
-                if run == self.run { trials?.finish(.error) }
+                if run == self.run {
+                    diagnostics.error = error.localizedDescription
+                    diagnostics.status = "Recognition error"
+                    diagnostics.note("Error: \(error.localizedDescription)")
+                    trials?.finish(.error)
+                }
                 return
             }
             guard run == self.run else { return }
+            if trials?.isEnabled == true {
+                diagnostics.record(update, milliseconds: Int(Date().timeIntervalSince(started) * 1000))
+            }
             handle(update, at: time, imageSize: size)
         }
     }
 
     // MARK: Private
-
-    /// The item is found. A test scan only measures recognition; the list stays as it is.
-    private func finish(_ target: ScanTarget) {
-        if mode == .testScan { stopTarget() } else { found(target.listItemID) }
-    }
 
     private func next(announcing: Bool) {
         stopTarget()
@@ -191,6 +248,11 @@ final class ItemScanner {
         let target = queue.removeFirst()
         self.target = target
         targetChanged(target)
+        diagnostics = ScanDiagnostics()
+        diagnostics.status = "Starting recognition"
+        diagnostics.cloudConfigured = target.catalog.recognizesByAppearance && CloudAssistConfig.endpoint != nil
+        diagnostics.cloudEndpoint = CloudAssistConfig.endpoint?.host
+        latestFrameTime = nil
         // The navigator already named the stop's items on arrival.
         if announcing { announce("Now looking for \(target.name).", nil) }
         let run = run
@@ -209,12 +271,42 @@ final class ItemScanner {
                     return
                 }
                 self.coordinator = coordinator
+                produceClassifier = classifier
+                diagnostics.isRunning = true
+                diagnostics.status = "Waiting for camera frames"
+                diagnostics.note(target.catalog.recognizesByAppearance ? "Apple Vision · appearance scan" : "OCR · label scan")
+                if classifier != nil && !diagnostics.cloudConfigured {
+                    diagnostics.note("Gemini unavailable: configure the proxy in test settings")
+                }
                 trials?.begin(target, mode: mode)
             } catch {
                 print("📷 Can't look for \(target.name): \(error.localizedDescription)")
                 guard run == self.run else { return }
-                next(announcing: true)
+                diagnostics.error = error.localizedDescription
+                diagnostics.status = "Could not start recognition"
+                diagnostics.note("Setup failed: \(error.localizedDescription)")
+                if !isTestScan { next(announcing: true) }
             }
+        }
+    }
+
+    /// Polled by the tester UI so an in-flight cloud request is visible while
+    /// camera submissions are busy. Generation checking drops old scan results.
+    func refreshCloudUsage() async {
+        guard let produceClassifier else { return }
+        let run = run
+        let usage = await produceClassifier.usage(at: latestFrameTime)
+        guard run == self.run else { return }
+        let previous = diagnostics.cloud
+        diagnostics.cloud = usage
+        if usage.isRequestInFlight && previous?.isRequestInFlight != true {
+            diagnostics.note("Gemini request \(usage.calls)/\(usage.limit) in progress")
+        }
+        if let failure = usage.lastFailure, failure != previous?.lastFailure {
+            diagnostics.note("Gemini failed: \(failure)")
+        }
+        if let label = usage.lastLabel, label != previous?.lastLabel {
+            diagnostics.note("Gemini returned \(label.label) · \(Int(label.confidence * 100))%")
         }
     }
 
@@ -225,20 +317,31 @@ final class ItemScanner {
         return target.catalog.candidates.first { $0.id == id }?.displayName
     }
 
+    /// The item is in the user's hand: into the cart. A test scan only measures recognition, so
+    /// the list stays as it is.
+    private func picked(_ target: ScanTarget) {
+        if mode == .testScan { stopTarget() } else { found(target.listItemID) }
+    }
+
     private func stopTarget() {
         // Leaving the item any way but Yes: after the one-minute notice it counts as timed out.
         trials?.finish(.stopped)
         run += 1
         if let coordinator { Task { await coordinator.stop() } }
         coordinator = nil
+        produceClassifier = nil
+        answering = false
+        diagnostics.isRunning = false
         question = nil
         hint = nil
-        objectMeters = nil
+        pickingUp = nil
+        // Done with this item's product: LiDAR off, arm and hand guide stopped.
+        range?.stop()
+        pickup?.stop()
         spokenHint = nil
         spokenAt = -.infinity
         toldToMoveOn = false
         productBox = nil
-        isPickingUp = false
     }
 
     /// Where the item is in the frame, in Vision coordinates: the one object in view, or with
@@ -270,33 +373,43 @@ final class ItemScanner {
             trials?.asked(update.result?.matchLevel)
             question = prompt
             hint = nil
+            follow(update, imageSize: imageSize)
             announce(prompt, .arrived)
             return
         }
         // After a minute at the item without finding it.
         if let notice = update.advanceNotice, !toldToMoveOn {
             toldToMoveOn = true
+            hint = nil
             announce(notice, nil)
         }
         // Frames that weren't looked at (in between, or detection off) carry no result.
         guard update.gate.isDetectionActive, update.result != nil else {
-            if !update.gate.isDetectionActive {
-                hint = nil
-                objectMeters = nil
-            }
+            if !update.gate.isDetectionActive { hint = nil }
             return
         }
-        objectMeters = depth?.range(
-            focused: update.focusedObject, region: update.assessment?.objectRegion,
-            objectCount: update.assessment?.objectBoxes.count ?? 0, imageSize: imageSize)
-        hint = update.guidance.map { $0.message(facing: facing) }
-        guard let guidance = update.guidance, hint != spokenHint, time - spokenAt >= Self.hintInterval else {
+        // Facing a shelf, left and right in the image are along it: push or pull the cart.
+        hint = update.guidance.map { $0.message(facing: facing) } ?? update.framingInstruction
+        guard let hint, hint != spokenHint, time - spokenAt >= Self.hintInterval else {
             if hint == nil { spokenHint = nil }
             return
         }
         spokenHint = hint
         spokenAt = time
-        announce(guidance.message(facing: facing), guidance.haptic(facing: facing))
+        announce(hint, update.guidance?.haptic(facing: facing))
+    }
+
+    /// Hands the product being asked about to PersonDistance to follow until the answer. Only one
+    /// product: `productBox` (the one object in view, or the one whose text matched), never the
+    /// region around several. Without one, a Yes has nothing to measure.
+    private func follow(_ update: RecognitionUpdate, imageSize: CGSize) {
+        guard !isTestScan, let target else { return }
+        // PersonDistance takes the camera buffer's pixels.
+        let box = productBox.flatMap {
+            try? VisionRegionOfInterest.pixelCrop(normalizedRegion: $0, imageSize: imageSize, orientation: .right)
+        } ?? update.focusedObject
+        guard let box else { return }
+        range?.follow(target.listItemID, box: box, imageSize: imageSize)
     }
 }
 

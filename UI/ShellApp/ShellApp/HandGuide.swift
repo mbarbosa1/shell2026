@@ -17,6 +17,9 @@ final class HandGuide: @unchecked Sendable {
         case left, right, up, down
         /// The fingertip is on the product.
         case onItem
+        /// Over the product on screen but short of it: reach further. Only `PickupGuide` gives this,
+        /// from PersonDistance's hand-to-product depth; HandGuide sees the screen only.
+        case reachFurther
         /// No hand in the frame.
         case noHand
 
@@ -27,9 +30,17 @@ final class HandGuide: @unchecked Sendable {
             case .up: .handUp
             case .down: .handDown
             case .onItem: .handOnItem
+            case .reachFurther: .handForward
             case .noHand: .handGuideOff
             }
         }
+    }
+
+    /// One frame's advice from the fingertip's place on screen, and that place (Vision coordinates),
+    /// so PersonDistance can read its depth. `.onItem` here only means over the product on screen.
+    struct Sighting {
+        let advice: Advice
+        let fingertip: CGPoint?
     }
 
     /// How far outside the product's box still counts as "on it", as a fraction of the frame.
@@ -48,22 +59,22 @@ final class HandGuide: @unchecked Sendable {
     ///   - productBox: where the product is, in Vision coordinates (0–1, origin at the bottom
     ///     left) for the same frame orientation.
     ///   - orientation: which way is up in `frame`. `.right` for the back camera with the phone upright.
-    func advice(for frame: CVPixelBuffer, orientation: CGImagePropertyOrientation, productBox: CGRect) -> Advice {
+    func look(in frame: CVPixelBuffer, orientation: CGImagePropertyOrientation, productBox: CGRect) -> Sighting {
         let handler = VNImageRequestHandler(cvPixelBuffer: frame, orientation: orientation)
         guard (try? handler.perform([request])) != nil,
               let hand = request.results?.first,
               let tip = pointingSpot(of: hand)
-        else { return .noHand }
+        else { return Sighting(advice: .noHand, fingertip: nil) }
 
-        if productBox.insetBy(dx: -margin, dy: -margin).contains(tip) { return .onItem }
+        if productBox.insetBy(dx: -margin, dy: -margin).contains(tip) { return Sighting(advice: .onItem, fingertip: tip) }
 
         // Move along whichever axis is farther off first. Vision's y grows upward.
         let dx = productBox.midX - tip.x
         let dy = productBox.midY - tip.y
         if abs(dx) >= abs(dy) {
-            return dx > 0 ? .right : .left
+            return Sighting(advice: dx > 0 ? .right : .left, fingertip: tip)
         }
-        return dy > 0 ? .up : .down
+        return Sighting(advice: dy > 0 ? .up : .down, fingertip: tip)
     }
 
     /// The index fingertip, since that's what reaches the product first. Falls back to the

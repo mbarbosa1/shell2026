@@ -6,7 +6,7 @@ import simd
 /// Walks the user through a planned route by measuring how far they've gone along it.
 ///
 /// The route is cut into legs: straight runs from one decision point to the next (a turn, where a
-/// stop begins, the end of a lane, the cashier). A leg's length is the sum of its edges' walked
+/// stop begins, the end of a lane, the self checkout). A leg's length is the sum of its edges' walked
 /// lengths, which were measured, so they're trusted over the drawn node positions. ARKit (or a
 /// simulated walk) says where the phone is; the distance moved since the leg began, along the
 /// leg's direction, is how far along it the user is. Getting within `arrivalTolerance` of the
@@ -19,6 +19,10 @@ import simd
 ///
 /// At a stop the navigator waits: the camera takes over to find the items. Once they're all in the
 /// cart (or the stop is skipped), it plans again from where the user is, for what's left.
+///
+/// Every route ends along the map's self-checkout row (`StoreMap.checkoutRow`): when that last leg
+/// starts, `onCheckoutRow` lets the camera look for the machines, and the trip ends at
+/// `reachedCheckout()`, or at the end of the row.
 ///
 /// Every instruction goes out through `announce`: spoken, and played on the watch (`WatchHaptic`).
 @MainActor
@@ -100,6 +104,11 @@ final class RouteNavigator {
     @ObservationIgnored var onStopChanged: ((RoutePlanner.Stop?) -> Void)?
     /// The camera image from `PositionTracker`, on a real walk. See `PositionTracker.onFrame`.
     @ObservationIgnored var onFrame: ((CVPixelBuffer, TimeInterval, _ isAdjustingFocus: Bool) -> Void)?
+    /// Called when the last leg starts along the map's self-checkout row, with the side the machines
+    /// are on. The camera looks for them until `reachedCheckout()` or the end of the row.
+    @ObservationIgnored var onCheckoutRow: ((StoreMap.Side) -> Void)?
+    /// Set once the camera has seen a self-checkout on the row, so the end of the row says so.
+    @ObservationIgnored var checkoutSeen = false
 
     /// The part of the path still to walk, from the start of the current leg.
     var remainingPath: [String] {
@@ -111,8 +120,10 @@ final class RouteNavigator {
     @ObservationIgnored private let announce: (String, WatchHaptic?) -> Void
     /// `AppModel`'s ARKit session, followed by `PositionTracker` on a real walk.
     @ObservationIgnored private let session: ARSession
-    /// Called once the route reaches the cashier.
+    /// Called once the route is over: at the self checkout, or at the end of its row.
     @ObservationIgnored private let onFinish: () -> Void
+    /// True once the last leg, along the self-checkout row, has started.
+    @ObservationIgnored private var onCheckoutLeg = false
     @ObservationIgnored private let positions: [String: SIMD2<Double>]
     @ObservationIgnored private let edgeMeters: [String: [String: Double]]
     @ObservationIgnored private var tracker: PositionTracker?
@@ -153,6 +164,8 @@ final class RouteNavigator {
     }
 
     func start() {
+        onCheckoutLeg = false
+        checkoutSeen = false
         if isSimulated {
             position = .zero
         } else {
@@ -170,7 +183,25 @@ final class RouteNavigator {
             skippedNote = "\(names) \(skipped.count == 1 ? "isn't" : "aren't") in this store, so I'll skip "
                 + (skipped.count == 1 ? "it." : "them.")
         }
+        // Nothing to walk to: every route starts and ends at the entrance, so this one would end
+        // the trip (and close the camera) before it began. Say why and leave the camera open.
+        guard !plan.stops.isEmpty || plan.path.count > 1 else {
+            skippedNote = nil  // The message below names them.
+            self.plan = plan
+            legs = []
+            phase = .finished
+            say(Self.nothingToWalk(plan), haptic: nil)
+            return
+        }
         follow(plan, from: position)
+    }
+
+    /// Why a route from the entrance has nowhere to go.
+    private static func nothingToWalk(_ plan: RoutePlanner.Plan) -> String {
+        let unplaced = plan.unlocated + plan.unmapped.map(\.name)
+        guard !unplaced.isEmpty else { return "There's nothing left on your list to get." }
+        return "I don't know where to find \(ListFormatter.localizedString(byJoining: unplaced)) in this store yet, "
+            + "so there's no route to walk. Add their store locations to the list."
     }
 
     func stop() {
@@ -275,6 +306,26 @@ final class RouteNavigator {
         metersLeft = legs[legIndex].meters
         let turn = leg.turnAfter ?? .straight
         say("\(spokenName(plan.path[leg.end])). " + goText(legs[legIndex], after: turn), haptic: turn.haptic)
+        startCheckoutRowIfNeeded()
+    }
+
+    /// The camera found the self checkout and the cart is at it: the trip is over.
+    func reachedCheckout() {
+        guard onCheckoutLeg, phase != .finished else { return }
+        finish(atCheckout: true)
+    }
+
+    /// The last leg runs along the self-checkout row: the camera starts looking for the machines.
+    private func startCheckoutRowIfNeeded() {
+        guard legs.indices.contains(legIndex), isCheckoutRow(legs[legIndex]), let row = map.checkoutRow else { return }
+        onCheckoutLeg = true
+        onCheckoutRow?(row.side)
+    }
+
+    /// True for the route's last leg when it runs along the map's self-checkout row.
+    private func isCheckoutRow(_ leg: Leg) -> Bool {
+        guard let row = map.checkoutRow, leg.end == plan.path.count - 1 else { return false }
+        return plan.path[leg.start] == row.path.first && plan.path[leg.end] == row.path.last
     }
 
     private func reach(_ stop: RoutePlanner.Stop) {
@@ -287,10 +338,23 @@ final class RouteNavigator {
         onStopChanged?(stop)
     }
 
-    private func finish() {
+    /// - Parameter atCheckout: the camera guided the cart to the self checkout.
+    private func finish(atCheckout: Bool = false) {
         phase = .finished
         metersLeft = 0
-        say("You've reached the \(spokenName(map.cashierId).lowercased()).", haptic: .finished)
+        let side = map.checkoutRow.map { $0.side == .left ? "left" : "right" } ?? "right"
+        let text = if atCheckout {
+            "You've reached the self checkout."
+        } else if onCheckoutLeg && isSimulated {
+            // No camera on a simulated walk, so nothing looked for the machines.
+            "The self checkouts are along this row, on your \(side)."
+        } else if onCheckoutLeg {
+            checkoutSeen ? "The self checkout is right here, on your \(side)."
+                : "This is the end of the self-checkout row, and I couldn't find a self checkout. Ask a staff member for help."
+        } else {
+            "You've reached the \(spokenName(map.checkoutId).lowercased())."
+        }
+        say(text, haptic: .finished)
         stop()
         onFinish()
     }
@@ -316,6 +380,7 @@ final class RouteNavigator {
         metersLeft = first.meters
         let turn = heading.map { Self.turn(from: $0, to: first.direction) } ?? .straight
         say(goText(first, after: turn), haptic: turn.haptic)
+        startCheckoutRowIfNeeded()
     }
 
     private func resume() {
@@ -389,6 +454,8 @@ final class RouteNavigator {
         let meters = max(Int(leg.meters.rounded()), 1)
         let target = if let stop = leg.stop {
             " to \(Self.aisles(of: stop))"
+        } else if isCheckoutRow(leg), let row = map.checkoutRow {
+            " past the self checkouts, on your \(row.side == .left ? "left" : "right")"
         } else if leg.end == plan.path.count - 1 {
             " to the \(spokenName(plan.path[leg.end]).lowercased())"
         } else {

@@ -22,13 +22,19 @@ The baseline that counts toward "complete" is recorded in **ShellApp**, the prod
 
 1. Run ShellApp from Xcode (a Debug build) on the phone. In the iPhone **Settings** app, open ShellApp and turn on **Tester mode**. A **Trials** button appears on the Shop screen.
 2. Put the items to test on the list (by voice or in the app) so each is linked to a catalog product.
-3. Decide the Gemini proxy once per session: set `CLOUD_PROXY_URL` and `CLOUD_PROXY_TOKEN` in the scheme's environment variables, or leave them unset for the on-device baseline.
+3. Set the Gemini proxy URL and optional proxy token under **Trials → Gemini fallback**. **Test connection** checks reachability and identifies mock mode; the first image request checks authentication and Gemini access. Use the Mac's network address, not `localhost`. These settings persist on the phone. Xcode's `CLOUD_PROXY_URL` and `CLOUD_PROXY_TOKEN` override saved values when supplied. Leave both sources empty for an on-device baseline.
 4. On **Trials**, set what will be in view and the conditions, and **OCR language correction**. Run the label items once with it on and once off.
 5. Start a trial either way:
    - **Test scan** (Phase 1, recognition only): tap an item under *Test scan an item*. The camera opens and scans at once, with detection on. **Yes** saves the trial and leaves the list alone.
    - **Real walk** (activation included): **Start shopping** and walk the route. Every stop's item scan is a trial with the setup you declared.
-6. The orange tester bar on the camera screen shows the trial. **Stop** saves it; **New trial** scans the same item again. Leaving the item (Yes, the X, a skipped stop, a check-off by voice) saves it too.
+6. Test scans show **Recognition Lab** below the camera: framing instructions, raw target score and threshold, smoothed match confidence, confirmation count, competing labels or OCR words, blocking stage, frame timing/freshness, and recent events. Gemini shows its countdown, attempts, in-flight request, last response, and errors. Missing classification is shown as **—**, not zero. **Yes, validate scan** requires a recognition receipt and skips hand pickup. **Stop** retains the last evidence; **New trial** starts fresh. The settings button can **Apply & restart** with a new proxy. Real walks keep the compact orange tester bar.
 7. Export from **Trials** → *Export … trials (CSV)*.
+
+If foreground localization cannot locate an object, or a single object is too small,
+configured Gemini can inspect that region (the full frame when no region exists) after
+the five-second window. Moving and refocusing frames still wait for a steadier view.
+A cloud failure never turns a rejected local frame into confirmation. Scores are model
+evidence, not calibrated probabilities. The shopper must still accept the suggested item.
 
 ### Demo
 

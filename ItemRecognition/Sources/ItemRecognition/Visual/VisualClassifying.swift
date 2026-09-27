@@ -62,9 +62,15 @@ public protocol VisualClassifying: Sendable {
     /// Detection turned on at this frame time: the shopper reached the item's spot in
     /// the aisle. Called again after every pause or reactivation.
     func searchStarted(at timestamp: TimeInterval) async
+    /// Optional cloud recovery when foreground localization cannot supply a usable
+    /// object. The scheduler never calls this for moving or refocusing frames.
+    func classifyFallback(in image: RecognitionImage, crop: CGRect?) async throws -> VisualObservation?
 }
 
-public extension VisualClassifying { func searchStarted(at timestamp: TimeInterval) async {} }
+public extension VisualClassifying {
+    func searchStarted(at timestamp: TimeInterval) async {}
+    func classifyFallback(in image: RecognitionImage, crop: CGRect?) async throws -> VisualObservation? { nil }
+}
 
 /// Provisional demo thresholds; validate per model on the intended device.
 public struct VisualRecognitionPolicy: Sendable {

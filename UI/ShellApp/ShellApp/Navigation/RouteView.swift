@@ -186,7 +186,6 @@ struct StoreMapView: View {
             let p = screen(node)
             let color: Color = switch node.kind {
             case .start: Theme.success
-            case .cashier: .orange
             case .scan: Theme.textSecondary
             case .walkway: Theme.textSecondary.opacity(0.5)
             }
@@ -209,11 +208,23 @@ struct StoreMapView: View {
             context.draw(context.resolve(Text("\(index + 1)").font(.caption2.bold()).foregroundStyle(Theme.onLavender)), at: p)
         }
 
-        for (id, label) in [(map.startId, "Start"), (map.cashierId, "Cashier")] {
-            guard let node = nodesById[id] else { continue }
+        if let node = nodesById[map.startId] {
             let p = screen(node)
-            context.draw(context.resolve(Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)),
+            context.draw(context.resolve(Text("Start").font(.caption2).foregroundStyle(Theme.textSecondary)),
                          at: CGPoint(x: p.x, y: p.y + 12))
+        }
+        // The self-checkout machines are somewhere along their row: the row, and its name beside it.
+        if let row = map.checkoutRow {
+            let points = row.path.compactMap { nodesById[$0] }.map(screen)
+            if points.count >= 2 {
+                var line = Path()
+                line.addLines(points)
+                context.stroke(line, with: .color(.orange), style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [4, 4]))
+                let middle = CGPoint(x: points.map(\.x).reduce(0, +) / CGFloat(points.count),
+                                     y: points.map(\.y).reduce(0, +) / CGFloat(points.count))
+                context.draw(context.resolve(Text("Self checkout").font(.caption2).foregroundStyle(.orange)),
+                             at: CGPoint(x: middle.x, y: middle.y - 12))
+            }
         }
     }
 }

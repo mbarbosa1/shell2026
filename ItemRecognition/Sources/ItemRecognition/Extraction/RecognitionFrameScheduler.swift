@@ -196,7 +196,16 @@ actor RecognitionFrameScheduler {
         guard await isCurrent(frame), !Task.isCancelled else { return .discarded }
         if let visualClassifier {
             // With several objects `objectRegion` is their padded union, classified as one picture.
-            if let assessment, !assessment.isClassifiable { return .processed(.unsuitable(assessment)) }
+            if let assessment, !assessment.isClassifiable {
+                if assessment.quality == .notLocated || assessment.quality == .tooSmall,
+                   let recovery = try await visualClassifier.classifyFallback(
+                    in: frame.image, crop: frame.crop ?? assessment.objectRegion) {
+                    guard await isCurrent(frame) else { return .discarded }
+                    return .processed(.visual(recovery, assessment: assessment))
+                }
+                guard await isCurrent(frame) else { return .discarded }
+                return .processed(.unsuitable(assessment))
+            }
             let observation = try await visualClassifier.classify(in: frame.image, crop: frame.crop ?? assessment?.objectRegion)
             guard await isCurrent(frame) else { return .discarded }
             return .processed(.visual(observation, assessment: assessment))

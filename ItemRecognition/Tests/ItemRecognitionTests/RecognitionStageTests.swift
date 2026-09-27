@@ -53,6 +53,18 @@ final class RecognitionStageTests: XCTestCase {
         XCTAssertEqual(tally.blocker, .cropping, "success stages are never the blocker")
     }
 
+    func testFramingInstructionsCoverMissingAndCenteredObjects() {
+        let missing = FrameAssessment(objectRegion: nil, quality: .notLocated)
+        XCTAssertEqual(update(result: result(), assessment: missing).framingInstruction,
+                       "Bring the item into view and hold the camera steady")
+        let centered = FrameAssessment(objectRegion: CGRect(x: 10, y: 10, width: 30, height: 30), quality: .usable)
+        XCTAssertEqual(update(result: result(), assessment: centered).framingInstruction,
+                       "Centered. Hold the camera steady")
+        XCTAssertNil(update(result: result(), assessment: centered, awaiting: true).framingInstruction)
+        let paused = ActivationDecision(state: .suspended, inactiveReason: .externalPause, clearTemporalCandidates: true)
+        XCTAssertNil(update(gate: paused, result: result(), assessment: centered).framingInstruction)
+    }
+
     // MARK: - Camera focus reaches the assessor
 
     func testRefocusingFrameIsNotLocated() async throws {
@@ -99,6 +111,8 @@ final class RecognitionStageTests: XCTestCase {
         let updates = try await run(session)
         let verdict = try XCTUnwrap(updates.first(where: \.awaitingVerdict))
         XCTAssertEqual(verdict.result?.status, .confirmed)
+        XCTAssertEqual(updates.map(\.confirmationCount), [1, 2, 3])
+        XCTAssertTrue(updates.allSatisfy { $0.requiredConfirmations == 3 })
         XCTAssertEqual(verdict.result?.matchLevel, .category)
         XCTAssertEqual(verdict.verdictPrompt, "This looks like onion. Is it Fresh Yellow Onion - each?")
         XCTAssertNil(verdict.confirmedObservation, "a machine match is not a found item")

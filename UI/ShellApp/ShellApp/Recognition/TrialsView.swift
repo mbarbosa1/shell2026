@@ -40,6 +40,8 @@ struct TrialsView: View {
                     Text("Applies from the next item. Run the label items both ways.")
                 }
 
+                CloudAssistSettingsSection()
+
                 Section {
                     let items = model.items.filter { $0.tcin != nil }
                     if items.isEmpty {
