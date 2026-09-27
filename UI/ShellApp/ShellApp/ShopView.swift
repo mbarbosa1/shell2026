@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ShopView: View {
     @Environment(AppModel.self) private var model
+    @State private var isRouteOpen = false
 
     var body: some View {
         ScrollView {
@@ -66,6 +67,12 @@ struct ShopView: View {
                             .accessibilityHint("Saves this list to History and starts a new one")
                     }
 
+                    if !model.items.isEmpty {
+                        Button("Show route") { isRouteOpen = true }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .accessibilityHint("Shows the shortest way through the store to everything on your list")
+                    }
+
                     Button("Start shopping") { model.isCameraOpen = true }
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityHint("Opens the camera on the shopping mount")
@@ -78,6 +85,7 @@ struct ShopView: View {
         }
         .scrollIndicators(.hidden)
         .foregroundStyle(Theme.textPrimary)
+        .sheet(isPresented: $isRouteOpen) { RouteView() }
     }
 
     /// Starting connects to Mira; stopping ends the conversation so she goes quiet right away.
