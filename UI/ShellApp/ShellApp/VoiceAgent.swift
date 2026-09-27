@@ -155,9 +155,10 @@ final class VoiceAgent {
     /// - `add_grocery_item` / `add_item`: `name`, and optional `brand`, `label`, `size`,
     ///   `quantity` (integer), `aisle` (integer), `block` (e.g. "G")
     /// - `update_grocery_item`: `name`, and any of `quantity`, `brand`, `label`, `size`, `aisle`,
-    ///   `block`, `in_cart` (boolean)
+    ///   `block`, `in_cart` (boolean). Checking an item off is `name` + `in_cart` true.
     /// - `set_item_location`: `name`, `aisle` (integer), `block`
-    /// - `remove_grocery_item` / `remove_item`, `check_off_item`: `name`
+    /// - `remove_grocery_item` / `remove_item`: `name`
+    /// - `check_off_item`: `name`. Older agents only; use `update_grocery_item` with `in_cart` true.
     /// - `add_usuals`, `get_most_common_items`, `get_last_trip`, `open_camera_or_close`,
     ///   `open_camera`, `close_camera`, `analyze_current_frame`, `cancel_current_operation`: none.
     ///   When the camera asks "Is this Oat milk?", `check_off_item` is yes and
@@ -203,6 +204,10 @@ final class VoiceAgent {
             guard changes.contains(where: { $0 != nil }) else {
                 return ("Nothing to update. Give a quantity, brand, label, size, aisle, block, or in_cart.", true)
             }
+            // Only in_cart true is checking the item off, so answer the way check_off_item does.
+            if isCollected == true, changes.compactMap({ $0 }).count == 1 {
+                return checkOff(name)
+            }
             return model.updateItem(
                 named: name, quantity: quantity, brand: brand, label: label, size: size,
                 aisle: aisle, block: block, isCollected: isCollected, source: .voice
@@ -226,12 +231,9 @@ final class VoiceAgent {
                 : ("\(name) isn't on the list.", true)
 
         case "check_off_item":
-            guard let name else { return ("Missing parameter: name.", true) }
-            switch model.checkOffItem(named: name, source: .voice) {
-            case .checkedOff: return ("Checked off \(name).", false)
-            case .alreadyInCart: return ("\(name) is already in the cart.", false)
-            case .notOnList: return ("\(name) isn't on the list.", true)
-            }
+            // Kept for agents still set up with it; update_grocery_item with in_cart true does the same.
+            guard let name else { return ("Missing parameter: name. Call update_grocery_item with name and in_cart true.", true) }
+            return checkOff(name)
 
         case "add_usuals":
             guard !model.usuals.isEmpty else { return ("There are no usuals yet. Items become usuals after they've been on two lists.", false) }
@@ -291,6 +293,14 @@ final class VoiceAgent {
 
         default:
             return ("Unknown tool: \(tool).", true)
+        }
+    }
+
+    private func checkOff(_ name: String) -> (message: String, isError: Bool) {
+        switch model.checkOffItem(named: name, source: .voice) {
+        case .checkedOff: return ("Checked off \(name).", false)
+        case .alreadyInCart: return ("\(name) is already in the cart.", false)
+        case .notOnList: return ("\(name) isn't on the list.", true)
         }
     }
 

@@ -220,7 +220,7 @@
 				DEVELOPMENT_TEAM = 4DJ429624Z;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = ShellApp;
+				INFOPLIST_KEY_CFBundleDisplayName = Mira;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to the sensor on your cart that warns you about obstacles ahead.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Automatically identify groceries and read product labels with your mounted phone.";
 				INFOPLIST_FILE = UI/ShellApp/Info.plist;
@@ -258,7 +258,7 @@
 				DEVELOPMENT_TEAM = 4DJ429624Z;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = ShellApp;
+				INFOPLIST_KEY_CFBundleDisplayName = Mira;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to the sensor on your cart that warns you about obstacles ahead.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Automatically identify groceries and read product labels with your mounted phone.";
 				INFOPLIST_FILE = UI/ShellApp/Info.plist;
