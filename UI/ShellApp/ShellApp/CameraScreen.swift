@@ -21,6 +21,12 @@ struct CameraScreen: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+
+            #if DEBUG
+            PickupTestPanel()
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.top, 8)
+            #endif
         }
         .overlay(alignment: .topTrailing) {
             Button { model.endShopping() } label: {
@@ -37,6 +43,35 @@ struct CameraScreen: View {
         .accessibilityAction(.escape) { model.endShopping() }
     }
 }
+
+#if DEBUG
+/// Debug-only buttons for testing hand guiding before computer vision is connected. Top left, so
+/// they stay clear of the X.
+private struct PickupTestPanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let pickup = model.pickup
+        HStack {
+            Button("Test hand guide") { pickup.testHandGuide() }
+            Button("Stop") { pickup.stop() }
+            Text(status(pickup))
+                .font(.caption.monospaced())
+        }
+        .buttonStyle(.bordered)
+        .padding(8)
+        .background(.black.opacity(0.6), in: .rect(cornerRadius: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 16)
+        .padding(.trailing, 88)
+    }
+
+    private func status(_ pickup: PickupGuide) -> String {
+        let advice = pickup.advice.map { "\($0)" } ?? "–"
+        return "\(pickup.phase) · \(advice)"
+    }
+}
+#endif
 
 /// "In your cart" panel from the Figma camera frame.
 struct CartPanel: View {
