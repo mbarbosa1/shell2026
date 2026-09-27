@@ -1,4 +1,5 @@
 import ARKit
+import PersonDistanceIOS
 import SwiftUI
 
 /// The app's one ARKit session: the rear camera feed on `CameraScreen`, and world tracking for
@@ -17,6 +18,8 @@ final class CameraService {
               await AVCaptureDevice.requestAccess(for: .video) else { return false }
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
+        // LiDAR depth for the camera screen's distance to the product (PersonDistance).
+        ProductDepthEstimator.enableSceneDepth(in: configuration)
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         isRunning = true
         return true

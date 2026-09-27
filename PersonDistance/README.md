@@ -2,6 +2,14 @@
 
 Status: planning only, September 27, 2026. No implementation or device testing has been performed. The user requested review before code is written.
 
+## Interim display readout (September 27, 2026, user direction)
+
+All phone-to-product distance code lives in this folder; UI code only displays its results. One interim piece exists ahead of the plan below: `Package.swift` with the `PersonDistanceIOS` target and `Sources/PersonDistanceIOS/ProductDepthEstimator.swift`. ShellApp (not the Demo) links it and shows the reading on its camera screen, beside the item being looked for ("Looking for Oat milk · 1.2 m"), while `ItemScanner` searches at a stop. It is display-only: nothing is spoken, sent to the watch, or decided from it.
+
+It follows two rules of this plan: it measures one product only (the object recognition matched, or the object region when exactly one object is in view, never a union of several), and it uses LiDAR scene depth when available (median of medium/high-confidence samples in the middle half of the box, converted from camera-plane depth to straight-line range with the camera intrinsics). Without scene depth (no LiDAR, or no depth on that frame) it falls back to an ARKit raycast against estimated surfaces, which this plan leaves out of scope.
+
+Not yet met: it measures before automatic confirmation; scene depth is enabled when the camera starts rather than after confirmation; it reads ARKit's latest frame instead of the frame recognition checked, so the box can be a fraction of a second old; there is no `PersonDistanceCore`, target tracking, validity policy, watch guidance, or tests. Verified only by unsigned iOS device and simulator builds of ShellApp; no device measurement yet.
+
 ## Confirmed requirements
 
 - Measure only after automatic product identification is confirmed; shopper acceptance is not the trigger.

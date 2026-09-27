@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5A1000000000000000000032 /* ItemRecognition in Frameworks */ = {isa = PBXBuildFile; productRef = 5A1000000000000000000031 /* ItemRecognition */; };
+		5A1000000000000000000035 /* PersonDistanceIOS in Frameworks */ = {isa = PBXBuildFile; productRef = 5A1000000000000000000034 /* PersonDistanceIOS */; };
 		C6743B1C3067FF220083994F /* ElevenLabs in Frameworks */ = {isa = PBXBuildFile; productRef = C6743B1B3067FF220083994F /* ElevenLabs */; };
 /* End PBXBuildFile section */
 
@@ -42,6 +43,7 @@
 			files = (
 				C6743B1C3067FF220083994F /* ElevenLabs in Frameworks */,
 				5A1000000000000000000032 /* ItemRecognition in Frameworks */,
+				5A1000000000000000000035 /* PersonDistanceIOS in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +92,7 @@
 			packageProductDependencies = (
 				C6743B1B3067FF220083994F /* ElevenLabs */,
 				5A1000000000000000000031 /* ItemRecognition */,
+				5A1000000000000000000034 /* PersonDistanceIOS */,
 			);
 			productName = ShellApp;
 			productReference = 5A1000000000000000000001 /* ShellApp.app */;
@@ -122,6 +125,7 @@
 			packageReferences = (
 				C6743B1A3067FF220083994F /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */,
 				5A1000000000000000000030 /* XCLocalSwiftPackageReference "ItemRecognition" */,
+				5A1000000000000000000033 /* XCLocalSwiftPackageReference "PersonDistance" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5A1000000000000000000005 /* Products */;
@@ -295,6 +299,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ItemRecognition;
 		};
+		5A1000000000000000000033 /* XCLocalSwiftPackageReference "PersonDistance" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = PersonDistance;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -313,6 +321,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5A1000000000000000000030 /* XCLocalSwiftPackageReference "ItemRecognition" */;
 			productName = ItemRecognition;
+		};
+		5A1000000000000000000034 /* PersonDistanceIOS */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A1000000000000000000033 /* XCLocalSwiftPackageReference "PersonDistance" */;
+			productName = PersonDistanceIOS;
 		};
 		C6743B1B3067FF220083994F /* ElevenLabs */ = {
 			isa = XCSwiftPackageProductDependency;

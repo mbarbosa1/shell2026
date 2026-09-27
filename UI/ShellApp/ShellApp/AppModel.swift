@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PersonDistanceIOS
 import SwiftData
 import UIKit
 
@@ -82,6 +83,7 @@ final class AppModel {
         voice = VoiceAgent(model: self)
         scanner.announce = { [weak self] text, haptic in self?.announce(text, haptic: haptic) }
         scanner.found = { [weak self] id in self?.putInCart(id) }
+        scanner.depth = ProductDepthEstimator(session: camera.session)
     }
 
     func toggleCollected(_ id: UUID) {

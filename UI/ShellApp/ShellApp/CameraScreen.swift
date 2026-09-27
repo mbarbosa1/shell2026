@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Full-screen camera. The mount aims the phone, so the only things on top of the feed
-/// are the small "Still to get" and "In your cart" panels and the X to leave, plus the
-/// camera's "Is this …?" while it waits for an answer.
+/// are the small "Still to get" and "In your cart" panels and the X to leave, plus, at a stop,
+/// what the camera is looking for and the camera's "Is this …?" while it waits for an answer.
 /// The feed is `AppModel`'s ARKit session, started by "Start shopping".
 struct CameraScreen: View {
     @Environment(AppModel.self) private var model
@@ -26,6 +26,14 @@ struct CameraScreen: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
+        .overlay(alignment: .topLeading) {
+            if let target = model.scanner.target {
+                ScanTargetPill(name: target.name, meters: model.scanner.objectMeters)
+                    .padding(.leading, 16)
+                    // Clear of the X: its 56 pt button, its 16 pt margin, and a gap.
+                    .padding(.trailing, 80)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             Button { model.endShopping() } label: {
                 Image(systemName: "xmark")
@@ -39,6 +47,48 @@ struct CameraScreen: View {
             .accessibilityHint("Stops shopping directions and closes the camera")
         }
         .accessibilityAction(.escape) { model.endShopping() }
+    }
+}
+
+/// What the camera is looking for at this stop, and how far the object in view is from the phone.
+/// A second check for anyone who can see some of the screen: it's read when VoiceOver lands on
+/// it, but never announced.
+private struct ScanTargetPill: View {
+    let name: String
+    /// Nil with no object in view.
+    let meters: Double?
+
+    /// "1.2"
+    private var figure: String? {
+        meters.map { $0.formatted(.number.precision(.fractionLength(1))) }
+    }
+
+    var body: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Looking for")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                Text(name)
+                    .font(.headline)
+                    .lineLimit(1)
+            }
+            Text(figure.map { "\($0) m" } ?? "—")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(meters == nil ? Theme.textSecondary : Theme.accentText)
+                .contentTransition(.numericText())
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.14))
+        }
+        .animation(.snappy, value: figure)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Looking for \(name)")
+        .accessibilityValue(figure.map { "\($0) meters away" } ?? "No object in view")
     }
 }
 

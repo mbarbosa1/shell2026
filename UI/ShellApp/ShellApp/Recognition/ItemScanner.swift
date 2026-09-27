@@ -2,6 +2,7 @@ import CoreVideo
 import Foundation
 import ItemRecognition
 import Observation
+import PersonDistanceIOS
 
 /// Looks for the list's items with the camera while the user is at a stop.
 ///
@@ -23,6 +24,9 @@ final class ItemScanner {
     private(set) var question: String?
     /// The latest hint, e.g. "Move closer to the item". Nil when there's nothing to fix.
     private(set) var hint: String?
+    /// Meters from the phone to the product in view, from PersonDistance, for the camera screen.
+    /// Nil with no single product in view or no reading. Only shown; nothing is decided by it.
+    private(set) var objectMeters: Double?
 
     /// How far past the end of a stop's lane the camera keeps looking.
     static let margin = 1.5
@@ -32,6 +36,8 @@ final class ItemScanner {
     @ObservationIgnored var announce: (String, WatchHaptic?) -> Void = { _, _ in }
     /// Puts the list item with this id in the cart. Set by `AppModel`.
     @ObservationIgnored var found: (UUID) -> Void = { _ in }
+    /// Measures `objectMeters`. Set by `AppModel`.
+    @ObservationIgnored var depth: ProductDepthEstimator?
     @ObservationIgnored private var queue: [ScanTarget] = []
     /// Meters past the reference node, or nil before it; and whether tracking can be trusted.
     @ObservationIgnored private var progress: () -> (meters: Double?, reliable: Bool) = { (nil, false) }
@@ -90,10 +96,8 @@ final class ItemScanner {
                 timestamp: time, passedLandmarkID: meters == nil ? nil : target.catalog.rule.landmarkID,
                 metersPastLandmark: meters, isReliable: reliable),
             externalPause: false)
-        let image = RecognitionImage(
-            timestamp: time, pixelBuffer: buffer,
-            imageResolution: CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer)),
-            orientation: .right)
+        let size = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+        let image = RecognitionImage(timestamp: time, pixelBuffer: buffer, imageResolution: size, orientation: .right)
         busy = true
         let run = run
         Task {
@@ -106,7 +110,7 @@ final class ItemScanner {
                 return
             }
             guard run == self.run else { return }
-            handle(update, at: time)
+            handle(update, at: time, imageSize: size)
         }
     }
 
@@ -148,12 +152,13 @@ final class ItemScanner {
         coordinator = nil
         question = nil
         hint = nil
+        objectMeters = nil
         spokenHint = nil
         spokenAt = -.infinity
         toldToMoveOn = false
     }
 
-    private func handle(_ update: RecognitionUpdate, at time: TimeInterval) {
+    private func handle(_ update: RecognitionUpdate, at time: TimeInterval, imageSize: CGSize) {
         if update.awaitingVerdict {
             guard question == nil, let prompt = update.verdictPrompt else { return }
             question = prompt
@@ -168,9 +173,15 @@ final class ItemScanner {
         }
         // Frames that weren't looked at (in between, or detection off) carry no result.
         guard update.gate.isDetectionActive, update.result != nil else {
-            if !update.gate.isDetectionActive { hint = nil }
+            if !update.gate.isDetectionActive {
+                hint = nil
+                objectMeters = nil
+            }
             return
         }
+        objectMeters = depth?.range(
+            focused: update.focusedObject, region: update.assessment?.objectRegion,
+            objectCount: update.assessment?.objectBoxes.count ?? 0, imageSize: imageSize)
         hint = update.guidance?.message
         guard let guidance = update.guidance, hint != spokenHint, time - spokenAt >= Self.hintInterval else {
             if hint == nil { spokenHint = nil }
