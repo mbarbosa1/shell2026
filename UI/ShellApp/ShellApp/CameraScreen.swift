@@ -141,18 +141,46 @@ private struct TesterBar: View {
 #endif
 
 #if DEBUG
-/// Debug-only buttons for testing hand guiding before computer vision is connected. In the top-left
-/// column, so they stay clear of the X.
+/// Debug-only buttons for testing the arm and hand guiding. In the top-left column, so they stay
+/// clear of the X.
 private struct PickupTestPanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let pickup = model.pickup
-        HStack {
-            Button("Test hand guide") { pickup.testHandGuide() }
-            Button("Stop") { pickup.stop() }
-            Text(status(pickup))
-                .font(.caption.monospaced())
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button("Arm left") { model.testFace(.left) }
+                Button("Ahead") { model.testFace(.ahead) }
+                Button("Arm right") { model.testFace(.right) }
+                Text(model.isDeviceConnected ? "Cart connected" : "No cart")
+                    .font(.caption.monospaced())
+            }
+            HStack {
+                Button("−5°") { model.arm.nudgePan(by: -5) }
+                Button("+5°") { model.arm.nudgePan(by: 5) }
+                Text("pan \(model.arm.pose.pan) · tilt \(model.arm.pose.tilt)")
+                    .font(.caption.monospaced())
+            }
+            HStack {
+                Button("Tilt up") { model.arm.nudgeTilt(by: 10) }
+                Button("Level") { model.arm.level() }
+                Button("Tilt down") { model.arm.nudgeTilt(by: -10) }
+            }
+            // What each servo was last told, newest first.
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(model.arm.recentMoves.enumerated()), id: \.offset) { _, move in
+                    Text(move)
+                }
+            }
+            .font(.caption2.monospaced())
+            .foregroundStyle(.white)
+            HStack {
+                Button("Test hand guide") { pickup.testHandGuide() }
+                Button("Stop") { pickup.stop() }
+                Text(status(pickup))
+                    .font(.caption.monospaced())
+            }
         }
         .buttonStyle(.bordered)
         .padding(8)

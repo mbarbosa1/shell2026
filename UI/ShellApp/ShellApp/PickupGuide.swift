@@ -7,12 +7,17 @@ import Observation
 ///
 /// 1. **Searching:** the arm sweeps the phone across the shelf (`ArmController.sweepPoses`) while
 ///    computer vision looks for the product. The vision code reports what it sees by calling
-///    `productSeen(_:)`.
+///    `productSeen(_:)`. On a walk, `ItemScanner` does the searching instead, and once the user
+///    confirms the product, `track(from:)` starts at phase 2.
 /// 2. **Centering:** the arm turns in small steps until the product is in the middle of the frame.
+///    With `track(from:)`, `ProductTracker` follows the product on every frame meanwhile, so it
+///    stays centered while the cart moves.
 /// 3. **Guiding the hand:** the arm holds still and the watch plays `productFound`. A few times a
 ///    second, `HandGuide` finds the user's hand in the camera frame and the watch buzzes which way
 ///    to move it.
 /// 4. **Done:** the fingertip has stayed on the product for a moment, and the watch plays success.
+///
+/// `finished` reports the end of a `track(from:)`: reached, or lost before the hand got there.
 ///
 /// The arm stays still in phase 3 on purpose: the hand covers the product, so computer vision
 /// would lose it, and a moving phone would move the target the hand is aiming for. Computer vision
@@ -25,7 +30,7 @@ import Observation
 final class PickupGuide {
     enum Phase: Equatable {
         case idle, searching, centering, guidingHand, done
-        /// The sweep finished without computer vision seeing the product.
+        /// The sweep finished without computer vision seeing the product, or the tracker lost it.
         case notFound
     }
 
@@ -53,6 +58,10 @@ final class PickupGuide {
     private let sweepPasses = 2
     /// How often the hand is checked. Vision takes ~20 ms per frame.
     private let handCheckInterval: Duration = .milliseconds(120)
+    /// How often the tracker looks while centering. It takes a few ms per frame.
+    private let trackInterval: Duration = .milliseconds(50)
+    /// With the product out of the tracker's sight this long, it's lost.
+    private let lostTimeout: Duration = .seconds(1.5)
 
     // MARK: State
 
@@ -63,12 +72,17 @@ final class PickupGuide {
     @ObservationIgnored private let visionQueue = DispatchQueue(label: "shellapp.handguide")
     @ObservationIgnored private var sweep: Task<Void, Never>?
     @ObservationIgnored private var handChecks: Task<Void, Never>?
+    @ObservationIgnored private var tracking: Task<Void, Never>?
     @ObservationIgnored private var centeredFrames = 0
     @ObservationIgnored private var candidate: HandGuide.Advice?
     @ObservationIgnored private var candidateFrames = 0
     @ObservationIgnored private var lastHandSeen = ContinuousClock.now
     /// The hand cue the watch is currently repeating, so it's only sent when it changes.
     @ObservationIgnored private var sentHaptic: WatchHaptic?
+
+    /// Called at the end of a `track(from:)`: true when the hand reached the product, false when
+    /// the product was lost first. Not called after `stop()`. Set by `AppModel`.
+    @ObservationIgnored var finished: (Bool) -> Void = { _ in }
 
     init(arm: ArmController, watch: WatchLink, session: ARSession) {
         self.arm = arm
@@ -79,14 +93,14 @@ final class PickupGuide {
     // MARK: Controls
 
     /// Starts searching the shelf on one side, e.g. from the map's `Visit.side` for this item.
-    func start(shelfSide: ArmController.ShelfSide) {
+    func start(shelfSide: StoreMap.Side) {
         stop()
         phase = .searching
         let poses = arm.sweepPoses(facing: shelfSide)
         sweep = Task {
             for _ in 0..<sweepPasses {
                 for pose in poses {
-                    arm.move(to: pose)
+                    arm.move(to: pose, why: "sweep")
                     try? await Task.sleep(for: sweepDwell)
                     if Task.isCancelled { return }
                 }
@@ -96,10 +110,44 @@ final class PickupGuide {
         }
     }
 
+    /// Starts at centering, with the product computer vision found at `box` (Vision coordinates,
+    /// oriented like `frameOrientation`): the arm follows it until it's centered, then guides the
+    /// hand to it.
+    func track(from box: CGRect) {
+        stop()
+        phase = .centering
+        centeredFrames = 0
+        let tracker = ProductTracker(box: box)
+        tracking = Task {
+            var lostSince: ContinuousClock.Instant?
+            while !Task.isCancelled && phase == .centering {
+                if let frame = session.currentFrame?.capturedImage {
+                    let seen = await follow(tracker, in: frame)
+                    guard !Task.isCancelled, phase == .centering else { return }
+                    if let seen {
+                        lostSince = nil
+                        center(on: seen)
+                    } else {
+                        let since = lostSince ?? .now
+                        lostSince = since
+                        if ContinuousClock.now - since > lostTimeout {
+                            phase = .notFound
+                            finished(false)
+                            return
+                        }
+                    }
+                }
+                try? await Task.sleep(for: trackInterval)
+            }
+        }
+    }
+
     /// Stops everything and turns off any hand-guide buzzing.
     func stop() {
         sweep?.cancel()
         sweep = nil
+        tracking?.cancel()
+        tracking = nil
         handChecks?.cancel()
         handChecks = nil
         if phase == .guidingHand { watch.send(.handGuideOff, text: "Hand guide stopped.") }
@@ -167,11 +215,24 @@ final class PickupGuide {
         }
     }
 
+    /// Runs the tracker off the main thread, like `checkHand`.
+    private func follow(_ tracker: ProductTracker, in frame: CVPixelBuffer) async -> CGRect? {
+        let orientation = Self.frameOrientation
+        nonisolated(unsafe) let frame = frame
+        return await withCheckedContinuation { continuation in
+            visionQueue.async {
+                continuation.resume(returning: tracker.follow(in: frame, orientation: orientation))
+            }
+        }
+    }
+
     /// Runs Vision off the main thread. Only the pixel buffer is kept, not the whole ARFrame,
     /// since holding frames stalls ARKit's camera.
     private func checkHand(in frame: CVPixelBuffer, target: CGRect) async -> HandGuide.Advice {
         let handGuide = handGuide
         let orientation = Self.frameOrientation
+        // Only read on the Vision queue, one check at a time, and dropped once it's done.
+        nonisolated(unsafe) let frame = frame
         return await withCheckedContinuation { continuation in
             visionQueue.async {
                 continuation.resume(returning: handGuide.advice(for: frame, orientation: orientation, productBox: target))
@@ -208,6 +269,7 @@ final class PickupGuide {
             handChecks?.cancel()
             handChecks = nil
             watch.send(.handOnItem, text: "Got it.")
+            finished(true)
             return
         }
         let haptic = advice.watchHaptic

@@ -25,6 +25,9 @@ final class CartBluetooth: NSObject {
     private var cart: CBPeripheral?
     /// Where servo angles are written. Nil until it's found after connecting.
     private var command: CBCharacteristic?
+    /// The newest servo angles not sent yet. Only the latest matters: the arm moves to wherever
+    /// it was last told.
+    private var pendingArm: Data?
 
     override init() {
         super.init()
@@ -35,11 +38,18 @@ final class CartBluetooth: NSObject {
     }
 
     /// Sends the three servo angles (0–180) as 3 raw bytes, the firmware's fastest format.
-    /// Dropped when the cart isn't connected or Bluetooth's send queue is full; the next move
-    /// replaces it anyway, and the firmware keeps moving toward the last angles it got.
+    /// When the cart isn't connected or Bluetooth's send queue is full, the angles wait and go
+    /// out as soon as they can, so a one-off move like facing a shelf isn't lost. A newer move
+    /// replaces a waiting one.
     func sendArm(pan: UInt8, tilt1: UInt8, tilt2: UInt8) {
-        guard let cart, let command, cart.canSendWriteWithoutResponse else { return }
-        cart.writeValue(Data([pan, tilt1, tilt2]), for: command, type: .withoutResponse)
+        pendingArm = Data([pan, tilt1, tilt2])
+        sendPendingArm()
+    }
+
+    private func sendPendingArm() {
+        guard let pendingArm, let cart, let command, cart.canSendWriteWithoutResponse else { return }
+        cart.writeValue(pendingArm, for: command, type: .withoutResponse)
+        self.pendingArm = nil
     }
 
     private func scan() {
@@ -104,9 +114,15 @@ extension CartBluetooth: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         command = service.characteristics?.first { $0.uuid == Self.commandUUID }
+        sendPendingArm()
         guard let distance = service.characteristics?.first(where: { $0.uuid == Self.distanceUUID }) else { return }
         // Subscribe, so each new reading arrives in `didUpdateValueFor` below.
         peripheral.setNotifyValue(true, for: distance)
+    }
+
+    /// Bluetooth's send queue has room again.
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        sendPendingArm()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
