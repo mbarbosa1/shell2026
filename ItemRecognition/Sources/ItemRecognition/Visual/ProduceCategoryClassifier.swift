@@ -65,10 +65,25 @@ public struct ProduceTaxonomy: Decodable, Sendable {
     }
 }
 
-/// Broad MVP produce categories. `base` is the on-device model: Apple Vision now,
-/// or a Create ML detector trained on the same labels later. When `cloud` is set
-/// and local produce evidence stays weak for `weakFramesBeforeRequest`
-/// consecutive processed frames, one crop is sent for a cloud suggestion.
+/// Gemini use for one item scan, for a tester's display.
+public struct CloudAssistUsage: Sendable, Equatable {
+    public let calls: Int
+    public let limit: Int
+    /// Apple Vision time left before Gemini may be asked, as of the latest frame.
+    /// Nil when no call remains or no frame has been classified yet.
+    public let secondsUntilCall: TimeInterval?
+    public let lastLabel: CloudProduceLabel?
+    /// Why the last call gave no label, in plain words. Nil after a label.
+    public let lastFailure: String?
+    /// Wall-clock time of the last call.
+    public let lastSeconds: TimeInterval?
+}
+
+/// Broad MVP produce categories. `base` (Apple Vision now, or a Create ML detector
+/// later) classifies every frame. With `cloud` set, Gemini is asked only when Apple
+/// Vision has not produced a question in time (see `CloudAssistPolicy`). The call
+/// runs on the frame it describes; a Gemini label is used once and never reused
+/// for later frames.
 public actor ProduceCategoryClassifier: VisualClassifying {
     public static let modelID = "mvp.produce.categories.v1"
     private let base: any VisualClassifying
@@ -77,9 +92,15 @@ public actor ProduceCategoryClassifier: VisualClassifying {
     private let cloudPolicy: CloudAssistPolicy
     private lazy var imageContext = CIContext()
     private var cloudRequests = 0
-    /// Consecutive processed frames below `localScoreBelow` since the last
-    /// strong frame or cloud request. Skipped video frames never reach here.
-    private var weakStreak = 0
+    private var cloudInFlight = false
+    /// Frame time Apple Vision's current solo window started: detection turning on, or the first frame after a call.
+    private var windowStart: TimeInterval?
+    private var latestFrame: TimeInterval?
+    private var lastLabel: CloudProduceLabel?
+    private var lastFailure: String?
+    private var lastSeconds: TimeInterval?
+
+    private var callLimit: Int { min(cloudPolicy.maximumRequestsPerItem, cloudPolicy.maximumRequests) }
 
     public init(base: any VisualClassifying = VisionImageClassifier(),
                 cloud: (any CloudProduceLabeling)? = nil,
@@ -95,46 +116,59 @@ public actor ProduceCategoryClassifier: VisualClassifying {
                         supportedClassIDs: taxonomy.identifiers)
     }
 
+    public func searchStarted(at timestamp: TimeInterval) async {
+        windowStart = timestamp
+    }
+
+    public func usage() -> CloudAssistUsage {
+        let remaining: TimeInterval? = {
+            guard cloud != nil, cloudRequests < callLimit, let windowStart, let latestFrame else { return nil }
+            return max(0, cloudPolicy.appleVisionSeconds - (latestFrame - windowStart))
+        }()
+        return CloudAssistUsage(calls: cloudRequests, limit: cloud == nil ? 0 : callLimit, secondsUntilCall: remaining,
+                                lastLabel: lastLabel, lastFailure: lastFailure, lastSeconds: lastSeconds)
+    }
+
     public func classify(in image: RecognitionImage, crop: CGRect?) async throws -> VisualObservation {
-        let result = try await base.classify(in: image, crop: crop)
         let version = try await version()
-        let (local, background) = taxonomy.normalizeWithBackground(result.classifications)
-        let localObservation = VisualObservation(timestamp: result.timestamp, modelID: Self.modelID,
-            modelVersion: version, inputRegion: result.inputRegion, classifications: local,
-            backgroundLabel: background)
-        let localProduceScore = local.first { $0.identifier != "unknown" }?.score ?? 0
-        guard let cloud, localProduceScore < cloudPolicy.localScoreBelow else {
-            weakStreak = 0
-            return localObservation
+        let region = crop ?? CGRect(origin: .zero, size: image.imageResolution)
+        latestFrame = image.timestamp
+        if windowStart == nil { windowStart = image.timestamp }
+        guard let cloud, !cloudInFlight, cloudRequests < callLimit, let windowStart,
+              image.timestamp - windowStart >= cloudPolicy.appleVisionSeconds else {
+            return try await localObservation(image: image, crop: crop, version: version)
         }
-        weakStreak += 1
-        guard weakStreak >= cloudPolicy.weakFramesBeforeRequest else { return localObservation }
-        weakStreak = 0
-        guard cloudRequests < cloudPolicy.maximumRequestsPerItem, cloudRequests < cloudPolicy.maximumRequests else {
-            return VisualObservation(timestamp: result.timestamp, modelID: Self.modelID, modelVersion: version,
-                inputRegion: result.inputRegion, classifications: local,
-                diagnostic: "Cloud assist request limit reached; using on-device result.", backgroundLabel: background)
-        }
+        cloudInFlight = true
         cloudRequests += 1
-        let fallback: String
+        let started = Date()
+        // Apple Vision's next solo window starts on the first frame after the answer.
+        defer { cloudInFlight = false; self.windowStart = nil; lastSeconds = Date().timeIntervalSince(started) }
         do {
-            let jpeg = try CloudImageEncoder.jpeg(image, crop: result.inputRegion,
+            let jpeg = try CloudImageEncoder.jpeg(image, crop: region,
                 maxDimension: cloudPolicy.maxImageDimension, context: imageContext)
             let suggestion = try await cloud.label(jpeg: jpeg, allowedLabels: taxonomy.identifiers.sorted())
             if taxonomy.identifiers.contains(suggestion.label), suggestion.confidence.isFinite,
                (0...1).contains(suggestion.confidence) {
-                return VisualObservation(timestamp: result.timestamp, modelID: Self.modelID,
-                    modelVersion: version, inputRegion: result.inputRegion,
+                lastLabel = suggestion; lastFailure = nil
+                return VisualObservation(timestamp: image.timestamp, modelID: Self.modelID,
+                    modelVersion: version, inputRegion: region,
                     classifications: [VisualClassification(identifier: suggestion.label, score: suggestion.confidence)],
                     kind: .cloudSuggestion, diagnostic: "Cloud model \(suggestion.model)")
             }
-            fallback = CloudRecognitionError.invalidResponse.localizedDescription
+            lastLabel = nil; lastFailure = CloudRecognitionError.invalidResponse.localizedDescription
         } catch {
-            fallback = error.localizedDescription
+            lastLabel = nil; lastFailure = error.localizedDescription
         }
+        return try await localObservation(image: image, crop: crop, version: version,
+            diagnostic: "Cloud assist unavailable; using on-device result. \(lastFailure ?? "")")
+    }
+
+    private func localObservation(image: RecognitionImage, crop: CGRect?, version: String,
+                                  diagnostic: String? = nil) async throws -> VisualObservation {
+        let result = try await base.classify(in: image, crop: crop)
+        let (local, background) = taxonomy.normalizeWithBackground(result.classifications)
         return VisualObservation(timestamp: result.timestamp, modelID: Self.modelID, modelVersion: version,
-            inputRegion: result.inputRegion, classifications: local,
-            diagnostic: "Cloud assist unavailable; using on-device result. \(fallback)", backgroundLabel: background)
+            inputRegion: result.inputRegion, classifications: local, diagnostic: diagnostic, backgroundLabel: background)
     }
 
     /// Stable across local and cloud observations so switching source does not

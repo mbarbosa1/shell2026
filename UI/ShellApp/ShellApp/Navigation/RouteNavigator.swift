@@ -95,6 +95,12 @@ final class RouteNavigator {
     /// Why ARKit isn't tracking well right now, or nil.
     private(set) var trackingNote: String?
 
+    /// Called with the stop when the user reaches it, and with nil when they leave it (all its
+    /// items in the cart, skipped, or navigation stopped). The camera looks for items in between.
+    @ObservationIgnored var onStopChanged: ((RoutePlanner.Stop?) -> Void)?
+    /// The camera image from `PositionTracker`, on a real walk. See `PositionTracker.onFrame`.
+    @ObservationIgnored var onFrame: ((CVPixelBuffer, TimeInterval, _ isAdjustingFocus: Bool) -> Void)?
+
     /// The part of the path still to walk, from the start of the current leg.
     var remainingPath: [String] {
         guard legs.indices.contains(legIndex) else { return phase == .finished ? [] : plan.path }
@@ -151,6 +157,7 @@ final class RouteNavigator {
             let tracker = PositionTracker(session: session)
             tracker.onPosition = { [weak self] in self?.update(position: $0) }
             tracker.onStatus = { [weak self] in self?.trackingNote = $0 }
+            tracker.onFrame = { [weak self] in self?.onFrame?($0, $1, $2) }
             tracker.start()
             self.tracker = tracker
         }
@@ -160,6 +167,25 @@ final class RouteNavigator {
     func stop() {
         tracker?.stop()
         tracker = nil
+        onStopChanged?(nil)
+    }
+
+    /// How far the user has gone since reaching the active stop's first node: along the lane once
+    /// the map's turn is known, in a straight line before that or at a one-node stop. Nil when not
+    /// at a stop.
+    var metersIntoStop: Double? {
+        guard phase == .atStop, let stop = activeStop, let origin = stopOrigin, let p = position else { return nil }
+        let lane = stop.path
+        guard lane.count > 1, let alignment else { return simd_distance(p, origin) }
+        let direction = rotate(unitVector(from: lane[0], to: lane[lane.count - 1]), by: -alignment)
+        let along = simd_dot(p - origin, direction)
+        // Standing at the node wobbles a few centimeters either way; that's still at it.
+        return along > -Self.arrivalTolerance ? max(along, 0) : along
+    }
+
+    /// Walked length of a stop's lane: 0 for a one-node stop.
+    func meters(of stop: RoutePlanner.Stop) -> Double {
+        zip(stop.path, stop.path.dropFirst()).reduce(0) { $0 + edgeLength($1.0, $1.1) }
     }
 
     /// Call when the list changes. At a stop, moves on once all of its items are in the cart.
@@ -249,6 +275,7 @@ final class RouteNavigator {
         metersLeft = 0
         let items = ListFormatter.localizedString(byJoining: Self.items(of: stop))
         say("Stop. You're at \(Self.aisles(of: stop)) for \(items). Tell me when it's in the cart.", haptic: .arrived)
+        onStopChanged?(stop)
     }
 
     private func finish() {
@@ -285,6 +312,7 @@ final class RouteNavigator {
     private func resume() {
         guard let stop = activeStop else { return }
         activeStop = nil
+        onStopChanged?(nil)
         let (node, origin) = whereStopped(in: stop)
         let items = remainingItems().filter { !skipped.contains($0.name) }
         follow(RoutePlanner(map: map).plan(for: items, from: node), from: origin)

@@ -37,6 +37,7 @@ public actor VisionFrameAssessor: FrameAssessing {
         if let old, let oldTime, image.timestamp > oldTime, image.timestamp - oldTime < 1,
            let locatedAt, image.timestamp - locatedAt < 1 {
             let request = VNTrackObjectRequest(detectedObjectObservation: old)
+            request.revision = VisionRevisions.tracking
             request.trackingLevel = .accurate
             try sequence.perform([request], on: image.pixelBuffer, orientation: image.orientation)
             if let result = request.results?.first as? VNDetectedObjectObservation, result.confidence >= 0.6 {
@@ -45,6 +46,7 @@ public actor VisionFrameAssessor: FrameAssessing {
         }
         if observation == nil {
             let request = VNGenerateForegroundInstanceMaskRequest()
+            request.revision = VisionRevisions.foregroundMask
             let handler = VNImageRequestHandler(cvPixelBuffer: image.pixelBuffer, orientation: image.orientation, options: [:])
             try handler.perform([request])
             guard let mask = request.results?.first, !mask.allInstances.isEmpty else {
@@ -86,6 +88,9 @@ public actor VisionFrameAssessor: FrameAssessing {
         return FrameAssessment(objectRegion: crop, quality: quality, guidance: Self.guidance(for: quality, rect: rect),
                                continuityLost: lost, objectBoxes: [rect])
     }
+
+    /// An object below this share of the frame is `tooSmall`.
+    static let minimumUsableArea: CGFloat = 0.06
 
     /// Instances smaller than this share of the frame are dropped when others exist.
     static let minimumObjectArea: CGFloat = 0.01
@@ -133,7 +138,7 @@ public actor VisionFrameAssessor: FrameAssessing {
 
     static func quality(for rect: CGRect, moving: Bool) -> FrameAssessment.Quality {
         if moving { return .moving }
-        if rect.width * rect.height < 0.06 { return .tooSmall }
+        if rect.width * rect.height < minimumUsableArea { return .tooSmall }
         if rect.width * rect.height > 0.8 || rect.minX < 0.01 || rect.maxX > 0.99 || rect.minY < 0.01 || rect.maxY > 0.99 {
             return .clipped
         }

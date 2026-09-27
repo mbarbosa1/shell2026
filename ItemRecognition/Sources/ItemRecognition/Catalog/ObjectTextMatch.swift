@@ -37,11 +37,12 @@ extension CatalogMatcher {
     /// product are both correct). Nil when no object's text scores for the target.
     public func matchPerObject(_ observation: ProductTextObservation, objectBoxes: [CGRect],
                                against candidates: [CatalogItemSnapshot], requireDiscriminatingTerms: Bool = false,
-                               targetID: UUID, index: ShelfWordIndex? = nil) -> ObjectTextMatch? {
+                               targetID: UUID, index: ShelfWordIndex? = nil,
+                               query: GroceryQuery? = nil) -> ObjectTextMatch? {
         let scored = Self.group(observation, by: objectBoxes).compactMap { box, lines -> (ObjectTextMatch, Float)? in
             guard !lines.candidates.isEmpty else { return nil }
             let matches = match(lines, against: candidates, requireDiscriminatingTerms: requireDiscriminatingTerms,
-                                targetID: targetID, index: index)
+                                targetID: targetID, index: index, query: query)
             let score = matches.first { $0.itemID == targetID }?.score ?? 0
             guard score > 0 else { return nil }
             return (ObjectTextMatch(objectBox: box, observation: lines, matches: matches), score)

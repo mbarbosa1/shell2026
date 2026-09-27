@@ -22,6 +22,24 @@
                       <key>DefaultValue</key>
                       <false/>
               </dict>
+              <dict>
+                      <key>Type</key>
+                      <string>PSGroupSpecifier</string>
+                      <key>Title</key>
+                      <string>Testing</string>
+                      <key>FooterText</key>
+                      <string>Development builds only. Adds a Trials button to the Shop screen for recording item recognition trials.</string>
+              </dict>
+              <dict>
+                      <key>Type</key>
+                      <string>PSToggleSwitchSpecifier</string>
+                      <key>Title</key>
+                      <string>Tester mode</string>
+                      <key>Key</key>
+                      <string>testerMode</string>
+                      <key>DefaultValue</key>
+                      <false/>
+              </dict>
       </array>
 </dict>
 </plist>

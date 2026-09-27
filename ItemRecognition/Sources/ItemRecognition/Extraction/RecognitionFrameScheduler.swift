@@ -28,9 +28,8 @@ actor RecognitionFrameScheduler {
     private let regionDetector: any LabelRegionDetecting
     private let normalizer: any TextNormalizing
     private let assessor: (any FrameAssessing)?
-    /// Nil on the OCR path. Set when the session gives up on text and adopts
-    /// image recognition for the rest of this scan.
-    private var visualClassifier: (any VisualClassifying)?
+    /// Nil on the OCR path; fixed for the session.
+    private let visualClassifier: (any VisualClassifying)?
 
     /// Clamped to `strideRange` at init. Immutable, so readable without hopping to the actor.
     nonisolated let frameStride: Int
@@ -67,15 +66,6 @@ actor RecognitionFrameScheduler {
     /// Frames counted since the gate last became `.active`.
     var framesSinceActivation: Int { framesWhileActive }
 
-    /// Leave OCR for the rest of this scan. In-flight text work is discarded
-    /// and the frame cadence restarts so the first visual frame is a fresh look.
-    func switchToVisual(_ classifier: any VisualClassifying) {
-        visualClassifier = classifier
-        generation &+= 1
-        framesWhileActive = 0
-        discardPending()
-    }
-
     /// Invalidate queued/in-flight results and restart cadence after a context
     /// change supplied separately from camera frames.
     func invalidate() async {
@@ -106,6 +96,7 @@ actor RecognitionFrameScheduler {
         }
 
         framesWhileActive += 1
+        if framesWhileActive == 1 { await visualClassifier?.searchStarted(at: image.timestamp) }
         guard framesWhileActive % frameStride == 0 else {
             return .skipped
         }
@@ -203,21 +194,18 @@ actor RecognitionFrameScheduler {
         guard await isCurrent(frame) else { return .discarded }
         let assessment = try await assessor?.assess(frame.image)
         guard await isCurrent(frame), !Task.isCancelled else { return .discarded }
+        if let visualClassifier {
+            // With several objects `objectRegion` is their padded union, classified as one picture.
+            if let assessment, !assessment.isClassifiable { return .processed(.unsuitable(assessment)) }
+            let observation = try await visualClassifier.classify(in: frame.image, crop: frame.crop ?? assessment?.objectRegion)
+            guard await isCurrent(frame) else { return .discarded }
+            return .processed(.visual(observation, assessment: assessment))
+        }
         if let assessment, !assessment.isSuitable {
             // Size is only a hint for text: a small or close item may still be readable,
             // so OCR tries it and the coordinator advises only when nothing could be read.
             let sizeOnly = assessment.objectRegion != nil && (assessment.quality == .tooSmall || assessment.quality == .clipped)
-            guard visualClassifier == nil, sizeOnly else { return .processed(.unsuitable(assessment)) }
-        }
-        if let visualClassifier {
-            // Appearance classifies the whole crop, so it still needs one item in view.
-            if let assessment, assessment.objectBoxes.count > 1 {
-                return .processed(.unsuitable(FrameAssessment(objectRegion: nil, quality: .multipleObjects,
-                    continuityLost: true, objectBoxes: assessment.objectBoxes)))
-            }
-            let observation = try await visualClassifier.classify(in: frame.image, crop: frame.crop ?? assessment?.objectRegion)
-            guard await isCurrent(frame) else { return .discarded }
-            return .processed(.visual(observation, assessment: assessment))
+            guard sizeOnly else { return .processed(.unsuitable(assessment)) }
         }
         let crop: CGRect
         let detection: LabelRegionDetection

@@ -160,7 +160,9 @@ final class VoiceAgent {
     /// - `remove_grocery_item` / `remove_item`: `name`
     /// - `check_off_item`: `name`. Older agents only; use `update_grocery_item` with `in_cart` true.
     /// - `add_usuals`, `get_most_common_items`, `get_last_trip`, `open_camera_or_close`,
-    ///   `open_camera`, `close_camera`, `analyze_current_frame`, `cancel_current_operation`: none
+    ///   `open_camera`, `close_camera`, `analyze_current_frame`, `cancel_current_operation`: none.
+    ///   When the camera asks "Is this Oat milk?", `check_off_item` is yes and
+    ///   `cancel_current_operation` is no.
     /// - `get_list_history`: `number` (integer, optional; the open list if left out)
     /// - `finish_list` / `finished_list`: `store` (optional), e.g. "Publix"
     private func run(_ tool: String, parameters: [String: Any]) -> (message: String, isError: Bool) {
@@ -266,13 +268,13 @@ final class VoiceAgent {
             return ("Camera opened. Let's start shopping." + Self.notInCatalog(model.startShopping()), false)
 
         case "analyze_current_frame":
-            // No computer vision in the app yet, so say so instead of guessing a direction.
             return model.isCameraOpen
-                ? ("Frame analysis isn't connected yet, so I can't tell which way to turn.", true)
+                ? (model.scanStatus, false)
                 : ("The camera is closed. Open it first.", true)
 
         case "cancel_current_operation":
-            return ("Cancelled.", false)
+            // A "no" to the camera's "Is this …?" keeps it looking.
+            return model.answerScan(false) ? ("Okay, the camera will keep looking.", false) : ("Cancelled.", false)
 
         case "close_camera":
             return ("The camera stays on until you reach the cashier. "

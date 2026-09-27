@@ -52,7 +52,14 @@ enum PositionAdvice: Equatable {
 final class ScanModel: ObservableObject {
     let item: DemoItem
     let calibration: DemoCalibration
+    let baseline: BaselineLog
+    private var trial: BaselineTrial?
+    private let endpointText: String
+    private let token: String
+    private(set) var configuration: DemoScanConfiguration
 
+    /// The shopper's grocery-list entry; the words the package must show. Editable before Start.
+    @Published var listEntry: String
     @Published private(set) var isRunning = false
     @Published private(set) var status = "Camera not started."
     @Published private(set) var permissionDenied = false
@@ -62,17 +69,26 @@ final class ScanModel: ObservableObject {
     @Published private(set) var gate: ActivationDecision?
     @Published private(set) var position: PositionAdvice?
     @Published private(set) var modeMessage: String
+    @Published private(set) var geminiModel: String
+    /// Gemini calls and last answer for this item scan; nil without a proxy.
+    @Published private(set) var geminiUsage: CloudAssistUsage?
+    private var produceClassifier: ProduceCategoryClassifier?
 
     /// Mean Vision confidence of the latest OCR lines, 0…100: read quality, not identity.
     @Published private(set) var ocrPercent: Int?
-    /// Evidence for the target on the latest frame: title-word coverage (OCR) or label score (visual).
+    /// Evidence for the target on the latest frame: grocery-list word coverage (OCR) or label score (visual).
     @Published private(set) var scorePercent: Int?
     /// `ItemRecognitionResult.matchConfidence`, smoothed over recent frames.
     @Published private(set) var matchPercent: Int?
     @Published private(set) var resultStatus: ItemRecognitionResult.Status?
+    /// Set once confirmed: `.category` means only the produce class matched.
+    @Published private(set) var matchLevel: RecognitionMatchLevel?
     @Published private(set) var evidenceSource: RecognitionEvidenceSource?
-    /// The preset item the matcher picked, which can be a neighbor instead of the target.
+    /// The preset item whose words scored highest on the latest frame; can be a lookalike neighbor.
     @Published private(set) var bestMatch: DemoItem?
+    /// Where the latest processed frame stopped, e.g. cropping · textTooSmall.
+    @Published private(set) var stage: RecognitionStageOutcome?
+    @Published private(set) var verdictPrompt: String?
     /// The library's own sentence, e.g. `Read "Reduced Fat Milk". Partly matches (35%).`
     @Published private(set) var readSummary: String?
 
@@ -85,10 +101,23 @@ final class ScanModel: ObservableObject {
     @Published private(set) var frameMilliseconds: Int?
     private var lastLogged: String?
 
-    init(item: DemoItem, calibration: DemoCalibration) {
+    init(item: DemoItem, calibration: DemoCalibration, baseline: BaselineLog, endpointText: String = "", token: String = "") {
         self.item = item
         self.calibration = calibration
-        modeMessage = (item.recognizesByAppearance ? RecognitionModeNotice.appleVision : .ocrOnly).message
+        self.baseline = baseline
+        self.endpointText = endpointText
+        self.token = token
+        listEntry = item.listEntry
+        let endpoint = URL(string: endpointText.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { url in
+            (url.scheme == "http" || url.scheme == "https") && url.host != nil ? url : nil
+        }
+        configuration = DemoScanConfiguration(item: item, endpoint: endpoint,
+                                              token: token.isEmpty ? nil : token,
+                                              geminiModel: DemoScanConfiguration.defaultModel)
+        geminiModel = configuration.geminiModel
+        modeMessage = (item.recognizesByAppearance
+                       ? RecognitionModeNotice.appleVision
+                       : .ocrOnly).message
     }
 
     lazy var capture = DemoCameraCapture { [weak self] event in
@@ -126,20 +155,31 @@ final class ScanModel: ObservableObject {
         status = "Starting rear camera…"
         let session = calibration.session
         do {
-            // Produce is classified by appearance. Packaged goods read text first and keep the
-            // classifier as the library's fallback after three frames with no text.
-            let classifier = try ProduceCategoryClassifier(base: VisionImageClassifier())
+            configuration = await DemoScanConfiguration.load(item: item, endpointText: endpointText, token: token)
+            geminiModel = configuration.geminiModel
+            // Produce uses Apple Vision first; with a proxy URL, Gemini helps after 5 s at the item
+            // (2 calls per item). Packaged goods read the label only: a produce classifier cannot
+            // tell one package from another.
+            let classifier = item.recognizesByAppearance
+                ? try ProduceCategoryClassifier(base: VisionImageClassifier(), cloud: configuration.labeler()) : nil
+            produceClassifier = configuration.usesGemini ? classifier : nil
             let coordinator = try await RecognitionCoordinator(
                 targetID: item.id,
                 catalog: DemoCatalog(rule: calibration.rule(for: item)),
                 policy: calibration.recognitionPolicy,
-                visualClassifier: item.recognizesByAppearance ? classifier : nil,
+                visualClassifier: classifier,
                 visualPolicy: calibration.visualPolicy,
-                ocrFallback: item.recognizesByAppearance ? nil : classifier)
+                query: GroceryQuery(name: listEntry))
             guard isRunning else { await coordinator.stop(); return }
             appliedSession = session
+            if baseline.recording {
+                let path = item.recognizesByAppearance ? (configuration.usesGemini ? "gemini" : "appleVision") : "ocr"
+                trial = BaselineTrial(setup: baseline.setup, targetTCIN: item.tcin, targetTitle: item.title,
+                                      listEntry: listEntry, path: path, coverage: session.matchCoverage,
+                                      produceScore: session.produceScore, app: "demo", mode: "demo")
+            }
             capture.start(coordinator: coordinator, context: context(calibration.live))
-            print("[ItemRecognition] Scan \(item.title) | window \(session.activateAfterMeters)–\(session.deactivateAfterMeters) m after \(session.landmarkID) | coverage \(session.matchCoverage) | produce \(session.produceScore)")
+            print("[ItemRecognition] Scan \(item.title) | list \"\(listEntry)\" | window \(session.activateAfterMeters)–\(session.deactivateAfterMeters) m after \(session.landmarkID) | coverage \(session.matchCoverage) | produce \(session.produceScore)")
         } catch {
             isRunning = false
             status = error.localizedDescription
@@ -152,6 +192,13 @@ final class ScanModel: ObservableObject {
         capture.stop()
         position = nil
         status = "Stopped. Last results are kept below."
+        finishTrial(trial?.timedOut == true ? .timedOut : .stopped)
+    }
+
+    private func finishTrial(_ outcome: BaselineTrial.Outcome) {
+        guard let finished = trial else { return }
+        trial = nil
+        baseline.save(finished, outcome: outcome)
     }
 
     func restart() async {
@@ -169,6 +216,8 @@ final class ScanModel: ObservableObject {
         let accepted = insight
         capture.acceptInsight()
         awaitingVerdict = false
+        verdictPrompt = nil
+        finishTrial(.accepted)
         stop()
         status = "You confirmed \(accepted.isEmpty ? item.title : accepted)."
     }
@@ -176,7 +225,9 @@ final class ScanModel: ObservableObject {
     func negateInsight() {
         capture.rejectInsight()
         awaitingVerdict = false
+        verdictPrompt = nil
         insight = ""
+        trial?.rejections += 1
         status = "Not that. Looking again."
     }
 
@@ -191,33 +242,56 @@ final class ScanModel: ObservableObject {
 
     private func clearResults() {
         gate = nil; position = nil; ocrPercent = nil; scorePercent = nil; matchPercent = nil
-        resultStatus = nil; evidenceSource = nil; bestMatch = nil; readSummary = nil
+        resultStatus = nil; matchLevel = nil; evidenceSource = nil; bestMatch = nil; readSummary = nil
+        stage = nil; verdictPrompt = nil
         lines = []; labels = []; awaitingVerdict = false; insight = ""; advanceNotice = nil
-        frameMilliseconds = nil; lastLogged = nil
-        modeMessage = (item.recognizesByAppearance ? RecognitionModeNotice.appleVision : .ocrOnly).message
+        frameMilliseconds = nil; lastLogged = nil; geminiUsage = nil
+        modeMessage = (item.recognizesByAppearance
+                       ? RecognitionModeNotice.appleVision
+                       : .ocrOnly).message
     }
 
     private func receive(_ event: DemoCameraCapture.Event) {
         guard isRunning else { return }
         switch event {
         case .started:
-            status = item.recognizesByAppearance ? "Scanning appearance." : "Scanning. Point at the label."
+            status = item.recognizesByAppearance
+                ? (configuration.usesGemini ? "Scanning appearance. Gemini helps after 5 s at the item." : "Scanning appearance.")
+                : "Scanning. Point at the label."
         case .update(let update, let milliseconds):
             apply(update, milliseconds: milliseconds)
         case .failure(let message):
             isRunning = false
             position = nil
             status = message
+            finishTrial(.error)
             print("[ItemRecognition] Error: \(message)")
         }
     }
 
     private func apply(_ update: RecognitionUpdate, milliseconds: Double) {
+        if let produceClassifier {
+            Task { [weak self] in
+                let usage = await produceClassifier.usage()
+                self?.geminiUsage = usage
+            }
+        }
         gate = update.gate
         modeMessage = update.modeNotice.message
+        // A settled answer repeats on every frame until answered: one question, one tallied frame.
+        let repeated = update.awaitingVerdict && awaitingVerdict
+        if update.awaitingVerdict && !repeated { trial?.asked(update.result?.matchLevel) }
+        if !repeated {
+            let neighbor = DemoItem.named(update.result?.leadingItemID ?? update.result?.matchedItemID)
+            trial?.record(update, neighbor: neighbor.flatMap { $0.id == item.id ? nil : $0.title })
+        } else if update.advanceNotice != nil {
+            trial?.timedOut = true
+        }
         awaitingVerdict = update.awaitingVerdict
         if update.awaitingVerdict { insight = update.insight ?? "" }
+        verdictPrompt = update.verdictPrompt
         advanceNotice = update.advanceNotice ?? advanceNotice
+        stage = update.stageOutcome ?? stage
 
         guard update.gate.isDetectionActive else {
             position = nil
@@ -238,9 +312,15 @@ final class ScanModel: ObservableObject {
         scorePercent = percent(result.score)
         matchPercent = percent(result.matchConfidence)
         resultStatus = result.status
+        matchLevel = result.matchLevel
         evidenceSource = result.evidenceSource
-        bestMatch = DemoItem.all.first { $0.id == result.matchedItemID }
-        if let evidence = result.visualEvidence { labels = displayLabels(evidence) }
+        bestMatch = DemoItem.named(result.leadingItemID ?? result.matchedItemID)
+        if let evidence = result.visualEvidence {
+            labels = displayLabels(evidence)
+            if let diagnostic = evidence.diagnostic, diagnostic.hasPrefix("Cloud model ") {
+                geminiModel = String(diagnostic.dropFirst("Cloud model ".count))
+            }
+        }
         log(result)
     }
 

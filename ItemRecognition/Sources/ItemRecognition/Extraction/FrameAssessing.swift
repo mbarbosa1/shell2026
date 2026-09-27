@@ -16,6 +16,21 @@ public struct FrameAssessment: Sendable, Equatable {
     public let guidance: RecognitionGuidance?
     public let continuityLost: Bool
     public var isSuitable: Bool { quality == .usable && objectRegion != nil }
+    /// Appearance judges the whole region, not one package: a bin of onions is one
+    /// picture of onion, and a close-up that fills the frame is still a picture of
+    /// it. Several objects count by their union, so a pile of small items is not
+    /// "too small". Motion, focus and an empty frame still disqualify.
+    public var isClassifiable: Bool {
+        guard objectRegion != nil else { return false }
+        switch quality {
+        case .usable, .clipped: return true
+        case .tooSmall:
+            guard objectBoxes.count > 1 else { return false }
+            let union = objectBoxes.dropFirst().reduce(objectBoxes[0]) { $0.union($1) }
+            return union.width * union.height >= VisionFrameAssessor.minimumUsableArea
+        case .notLocated, .multipleObjects, .moving, .focusing: return false
+        }
+    }
     public var message: String {
         switch quality {
         case .usable: return "Item located"

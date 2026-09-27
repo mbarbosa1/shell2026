@@ -20,24 +20,19 @@ public protocol CloudProduceLabeling: Sendable {
     func label(jpeg: Data, allowedLabels: [String]) async throws -> CloudProduceLabel
 }
 
-/// Ask the cloud only after `weakFramesBeforeRequest` consecutive processed
-/// frames whose best local produce score is below `localScoreBelow`. One blurry
-/// video frame stays on device; a streak means this look will not confirm
-/// locally. Each request resets the streak. `maximumRequestsPerItem` bounds
-/// calls per classifier instance (one selected item per scan), and
-/// `maximumRequests` remains a session backstop. The scheduler's single
-/// inference slot already serializes requests, so a weak local frame is never
-/// interleaved between cloud answers (that would reset temporal confirmation).
+/// Apple Vision first; Gemini only when it has not found the item. After detection
+/// turns on, Apple Vision works alone for `appleVisionSeconds`; then one Gemini call
+/// is made, and after each call that did not lead to a question Apple Vision gets
+/// the same time again. `maximumRequestsPerItem` caps calls for one item scan and
+/// `maximumRequests` is a backstop.
 public struct CloudAssistPolicy: Sendable {
-    public let localScoreBelow: Float
-    public let weakFramesBeforeRequest: Int
     public let maximumRequestsPerItem: Int
     public let maximumRequests: Int
     public let maxImageDimension: CGFloat
-    public init(localScoreBelow: Float = 0.8, weakFramesBeforeRequest: Int = 3, maximumRequestsPerItem: Int = 2,
-                maximumRequests: Int = 200, maxImageDimension: CGFloat = 512) {
-        self.localScoreBelow = localScoreBelow.isFinite ? min(max(localScoreBelow, 0), 1) : 0.8
-        self.weakFramesBeforeRequest = max(1, weakFramesBeforeRequest)
+    public let appleVisionSeconds: TimeInterval
+    public init(maximumRequestsPerItem: Int = 2, maximumRequests: Int = 200, maxImageDimension: CGFloat = 512,
+                appleVisionSeconds: TimeInterval = 5) {
+        self.appleVisionSeconds = appleVisionSeconds.isFinite ? max(0, appleVisionSeconds) : 5
         self.maximumRequestsPerItem = max(0, maximumRequestsPerItem)
         self.maximumRequests = max(0, maximumRequests)
         self.maxImageDimension = maxImageDimension.isFinite ? max(64, maxImageDimension) : 512
@@ -63,7 +58,7 @@ public struct HTTPCloudProduceLabeler: CloudProduceLabeling {
     private let timeout: TimeInterval
     private let session: URLSession
 
-    /// Answers slower than the temporal gap (2 s by default) cannot chain into a confirmation.
+    /// A call slower than `timeout` fails, and Apple Vision's result for that frame stands.
     public init(endpoint: URL, token: String? = nil, timeout: TimeInterval = 4, session: URLSession = .shared) {
         self.endpoint = endpoint; self.token = token; self.timeout = timeout; self.session = session
     }
@@ -83,6 +78,48 @@ public struct HTTPCloudProduceLabeler: CloudProduceLabeling {
             throw CloudRecognitionError.invalidResponse
         }
         return label
+    }
+}
+
+/// `/healthz` from `ItemRecognition/CloudProxy/server.py`.
+public struct CloudProxyStatus: Sendable, Equatable, Decodable {
+    public let ok: Bool
+    public let mock: Bool
+    public let model: String
+
+    public static let defaultModel = "gemini-3.1-flash-lite"
+
+    public static func healthzURL(from labelEndpoint: URL) -> URL {
+        var parts = URLComponents(url: labelEndpoint, resolvingAgainstBaseURL: false) ?? URLComponents()
+        parts.path = "/healthz"
+        return parts.url ?? labelEndpoint
+    }
+
+    public static func fetch(from labelEndpoint: URL, session: URLSession = .shared) async -> String {
+        guard let status = try? await check(labelEndpoint, session: session), !status.model.isEmpty else { return defaultModel }
+        return status.model
+    }
+
+    /// Asks the proxy's `/healthz`, which costs no Gemini call. It does not check the
+    /// token: a wrong token shows up as HTTP 401 on the first produce call.
+    public static func check(_ labelEndpoint: URL, session: URLSession = .shared,
+                             timeout: TimeInterval = 4) async throws -> CloudProxyStatus {
+        let (data, response) = try await session.data(for: URLRequest(url: healthzURL(from: labelEndpoint),
+                                                                      timeoutInterval: timeout))
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else { throw CloudRecognitionError.httpStatus(code) }
+        guard let status = try? JSONDecoder().decode(CloudProxyStatus.self, from: data) else {
+            throw CloudRecognitionError.invalidResponse
+        }
+        return status
+    }
+
+    enum CodingKeys: String, CodingKey { case ok, mock, model }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try values.decode(Bool.self, forKey: .ok)
+        mock = try values.decodeIfPresent(Bool.self, forKey: .mock) ?? false
+        model = try values.decodeIfPresent(String.self, forKey: .model) ?? Self.defaultModel
     }
 }
 

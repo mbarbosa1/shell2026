@@ -28,4 +28,4 @@ Negatives: <count>. Capture sessions: <list>. Paste the validator output.
 ## Tuned app thresholds
 
 - `VisualRecognitionPolicy.minimumScore` / `minimumMargin`:
-- `CloudAssistPolicy.localScoreBelow`:
+- `CloudAssistPolicy.appleVisionSeconds` (time on device before Gemini is asked):

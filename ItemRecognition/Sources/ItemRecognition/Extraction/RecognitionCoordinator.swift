@@ -11,8 +11,6 @@ public struct RecognitionUpdate: Sendable {
     /// Source of this evidence; the frame deciding a switch is still OCR.
     public let modeNotice: RecognitionModeNotice
     public let activeMode: RecognitionModeNotice
-    /// Retained after switching. Consumers deduplicate its ID.
-    public let pathTransition: RecognitionPathTransition?
     public let assessment: FrameAssessment?
     /// Original-buffer pixels of the object whose text matched the target when
     /// several objects were in view. Nil with one object or before a match.
@@ -33,29 +31,43 @@ public struct RecognitionUpdate: Sendable {
         return suggestedObservation
     }
     public var suggestedObservation: ItemObservation? {
-        guard let result, result.status == .confirmed, let itemID = result.matchedItemID else { return nil }
+        guard let result, result.status == .confirmed, let itemID = result.matchedItemID,
+              let matchLevel = result.matchLevel else { return nil }
         return ItemObservation(timestamp: result.timestamp, itemID: itemID, matchConfidence: result.matchConfidence,
             observedTerms: result.normalizedObservedText, side: side ?? observation?.side,
-            evidenceSource: result.evidenceSource, visualEvidence: result.visualEvidence)
+            evidenceSource: result.evidenceSource, visualEvidence: result.visualEvidence,
+            matchLevel: matchLevel, category: matchLevel == .category ? result.matchedCategory : nil)
+    }
+    /// The question for the shopper while `awaitingVerdict`. A category match names
+    /// only what the machine saw, so the shopper checks variety, brand and size.
+    public var verdictPrompt: String? {
+        guard awaitingVerdict else { return nil }
+        let name = insight.flatMap { $0.isEmpty ? nil : $0 }
+        if result?.matchLevel == .category, let category = result?.matchedCategory {
+            return "This looks like \(category). Is it \(name ?? "the item you picked")?"
+        }
+        return name.map { "Is this \($0)?" } ?? "Is this the item you picked?"
     }
     public init(gate: ActivationDecision, observation: ProductTextObservation?, result: ItemRecognitionResult?,
                 side: ShelfSide? = nil, guidance: RecognitionGuidance? = nil, modeNotice: RecognitionModeNotice,
                 awaitingVerdict: Bool = false, insight: String? = nil, activeMode: RecognitionModeNotice? = nil,
-                pathTransition: RecognitionPathTransition? = nil, assessment: FrameAssessment? = nil,
+                assessment: FrameAssessment? = nil,
                 textReadiness: LabelRegionDetection.Readiness? = nil, didRunOCR: Bool = false,
                 advanceNotice: String? = nil, focusedObject: CGRect? = nil, progress: String? = nil) {
         self.gate = gate; self.observation = observation; self.result = result; self.side = side
         self.guidance = awaitingVerdict ? nil : guidance; self.modeNotice = modeNotice
         self.awaitingVerdict = awaitingVerdict; self.insight = insight
-        self.activeMode = activeMode ?? modeNotice; self.pathTransition = pathTransition
+        self.activeMode = activeMode ?? modeNotice
         self.assessment = assessment; self.textReadiness = textReadiness; self.didRunOCR = didRunOCR
         self.advanceNotice = advanceNotice; self.focusedObject = focusedObject
         self.progress = awaitingVerdict ? nil : progress
     }
 }
 
-/// One target/catalog snapshot per session. Every session starts with text.
-/// Only mapped products can adopt their validated appearance classifier.
+/// One target/catalog snapshot per session, on one path chosen at setup and kept
+/// for the whole session: appearance for mapped produce, label text otherwise.
+/// There is no text-to-appearance fallback: a produce classifier cannot tell one
+/// packaged product from another, so it could only ever claim a category.
 public actor RecognitionCoordinator {
     public nonisolated let sessionID = UUID()
     private let targetID: UUID
@@ -67,13 +79,11 @@ public actor RecognitionCoordinator {
     private let policy: RecognitionPolicy
     private let visualPolicy: VisualRecognitionPolicy
     private let visualModel: VisualModelInfo?
-    private let fallback: (any VisualClassifying)?
-    private let routingPolicy: RecognitionRoutingPolicy
     private let targetName: String
-    private var trial = TextTrial()
+    /// The shopper's grocery-list entry; the reference for label text when set.
+    private let query: GroceryQuery?
     private var deadline: ScanDeadline?
-    private var activeMode: RecognitionModeNotice = .ocrOnly
-    private var transition: RecognitionPathTransition?
+    private let activeMode: RecognitionModeNotice
     private var settled: RecognitionUpdate?
     private var visualModelVersion: String?
     private var confirmation: TemporalConfirmation
@@ -90,29 +100,33 @@ public actor RecognitionCoordinator {
                 policy: RecognitionPolicy = RecognitionPolicy(),
                 visualClassifier: (any VisualClassifying)? = nil,
                 visualPolicy: VisualRecognitionPolicy = VisualRecognitionPolicy(),
-                ocrFallback: (any VisualClassifying)? = nil,
-                routingPolicy: RecognitionRoutingPolicy = RecognitionRoutingPolicy(),
-                assessor: (any FrameAssessing)? = VisionFrameAssessor()) async throws {
+                assessor: (any FrameAssessing)? = VisionFrameAssessor(),
+                query: GroceryQuery? = nil) async throws {
         self.targetID = targetID; self.policy = policy; self.visualPolicy = visualPolicy
-        self.routingPolicy = routingPolicy
         candidates = try await catalog.catalogCandidates(for: targetID)
         wordIndex = ShelfWordIndex(candidates: candidates)
         guard let target = candidates.first(where: { $0.id == targetID }) else { throw RecognitionSessionError.missingTarget }
-        targetName = target.displayName
+        let query = query.flatMap { $0.words.isEmpty ? nil : $0 }
+        self.query = query
+        // The shopper is asked about what they put on the list, not the catalog's scraped title.
+        targetName = query?.displayName ?? target.displayName
         // An explicit item type decides. Fruit and vegetables use Apple Vision;
-        // any other type stays on OCR. Snapshots with no type keep the mapped path.
+        // any other type stays on OCR even when a classifier is supplied.
+        // Snapshots with no type keep the mapped path.
         let wantsAppearance = target.itemType == nil ? target.visual != nil : target.recognizesByAppearance
+        var appearance: (any VisualClassifying)?
         if wantsAppearance, let metadata = target.visual {
-            guard let classifier = visualClassifier ?? ocrFallback else { throw VisualRecognitionError.missingClassifier }
-            let info = try await classifier.modelInfo()
+            guard let visualClassifier else { throw VisualRecognitionError.missingClassifier }
+            let info = try await visualClassifier.modelInfo()
             guard metadata.modelID == info.id else { throw VisualRecognitionError.incompatibleModel }
             guard !metadata.classIDs.isEmpty, metadata.classIDs.isSubset(of: info.supportedClassIDs) else {
                 throw VisualRecognitionError.unsupportedClasses
             }
-            visualModel = info; fallback = classifier
+            visualModel = info; appearance = visualClassifier
             activeMode = .appleVision
         } else {
-            visualModel = nil; fallback = nil
+            visualModel = nil
+            activeMode = .ocrOnly
         }
         let observations = activeMode == .appleVision ? visualPolicy.requiredObservations : policy.requiredObservations
         let gap = activeMode == .appleVision ? visualPolicy.maximumGap : policy.maximumGap
@@ -120,24 +134,22 @@ public actor RecognitionCoordinator {
         smoother = MatchConfidenceSmoother(window: observations, maximumGap: gap)
         let gate = ActivationGate(catalog: catalog)
         self.gate = gate
-        extraction = RecognitionFrameScheduler(gate: gate, recognizer: recognizer, regionDetector: detector, assessor: assessor)
-        if activeMode == .appleVision, let classifier = fallback {
-            await extraction.switchToVisual(classifier)
-        }
+        extraction = RecognitionFrameScheduler(gate: gate, recognizer: recognizer, regionDetector: detector,
+                                               visualClassifier: appearance, assessor: assessor)
     }
 
     public func updateContext(_ context: RecognitionContext) async throws -> ActivationDecision {
         guard context.targetItemID == targetID else { throw RecognitionSessionError.wrongTarget }
         let decision = try await gate.evaluate(context)
         if decision.clearTemporalCandidates {
-            generation &+= 1; resetEvidence(); trial.reset(); settled = nil
+            generation &+= 1; resetEvidence(); settled = nil
             await extraction.invalidate()
         }
         return decision
     }
 
     public func stop() async {
-        stopped = true; generation &+= 1; resetEvidence(); trial.reset(); settled = nil
+        stopped = true; generation &+= 1; resetEvidence(); settled = nil
         await extraction.invalidate()
     }
 
@@ -152,7 +164,7 @@ public actor RecognitionCoordinator {
         return accepted
     }
 
-    public func rejectInsight() { settled = nil; resetEvidence(); trial.reset() }
+    public func rejectInsight() { settled = nil; resetEvidence() }
     private func resetEvidence() { confirmation.reset(); smoother.reset(); lastFocus = nil }
 
     public func submit(_ context: RecognitionContext, image: RecognitionImage, crop: CGRect? = nil) async throws -> RecognitionUpdate {
@@ -170,14 +182,14 @@ public actor RecognitionCoordinator {
         let revision = generation
         let outcome: RecognitionFrameOutcome
         do { outcome = try await extraction.submit(context, image: image, crop: crop) }
-        catch { resetEvidence(); trial.reset(); throw error }
+        catch { resetEvidence(); throw error }
         guard await gate.currentState == .active, revision == generation, !stopped, !Task.isCancelled else {
             return update(await gate.lastDecision ?? decision)
         }
         guard case .processed(let evidence) = outcome else { return update(decision) }
         switch evidence {
         case .unsuitable(let assessment):
-            resetEvidence(); trial.reset()
+            resetEvidence()
             return update(decision, result: emptyResult(image), guidance: assessment.guidance, assessment: assessment)
         case .visual(let visual, let assessment):
             if assessment?.continuityLost == true { resetEvidence() }
@@ -189,9 +201,8 @@ public actor RecognitionCoordinator {
                     decision: decision, side: side, assessment: assessment)
             } catch { resetEvidence(); throw error }
         case .text(let observation, let detection, let assessment):
-            if assessment?.continuityLost == true { resetEvidence(); trial.reset() }
+            if assessment?.continuityLost == true { resetEvidence() }
             let hasText = observation?.candidates.isEmpty == false
-            let suitable = detection.readiness == .noText || detection.readiness == .readable
             // Several objects: each object's text is scored alone and the catalog picks
             // the target's box, so water beside the milk never mixes into its evidence.
             let objects = assessment?.objectBoxes ?? []
@@ -201,13 +212,14 @@ public actor RecognitionCoordinator {
             let matches: [CatalogMatch]
             if separate, let observation {
                 let picked = matcher.matchPerObject(observation, objectBoxes: objects, against: candidates,
-                    requireDiscriminatingTerms: policy.requireDiscriminatingTerms, targetID: targetID, index: wordIndex)
+                    requireDiscriminatingTerms: policy.requireDiscriminatingTerms, targetID: targetID, index: wordIndex,
+                    query: query)
                 matches = picked?.matches ?? []
                 read = picked?.observation ?? observation
                 focus = picked?.objectBox
             } else {
                 matches = observation.map { matcher.match($0, against: candidates, requireDiscriminatingTerms: policy.requireDiscriminatingTerms,
-                    targetID: targetID, index: wordIndex) } ?? []
+                    targetID: targetID, index: wordIndex, query: query) } ?? []
                 focus = objects.first
             }
             // Evidence only chains while the chosen box stays put; a jump means another object.
@@ -216,29 +228,23 @@ public actor RecognitionCoordinator {
             let target = matches.first { $0.itemID == targetID }
             let score = target?.score ?? 0
             let runnerUp = matches.filter { $0.itemID != targetID }.map(\.score).max() ?? 0
-            let accepted = score > 0 && score >= policy.minimumScore && score - runnerUp >= policy.minimumMargin && target?.conflicts.isEmpty == true
+            let minimum = query == nil ? policy.minimumScore : policy.minimumQueryScore
+            let accepted = score > 0 && score >= minimum && score - runnerUp >= policy.minimumMargin && target?.conflicts.isEmpty == true
             let confirmed = confirmation.observe(targetID: targetID, timestamp: image.timestamp, accepted: accepted)
-            let strength = policy.minimumScore > 0 ? min(score / policy.minimumScore, 1) : 1
+            let strength = minimum > 0 ? min(score / minimum, 1) : 1
             let confidence = smoother.add(score > 0 ? score / (score + runnerUp) * strength : 0, at: image.timestamp)
             let terms = Set(read?.candidates.flatMap { TextNormalizer().tokens(from: $0.normalizedText) } ?? [])
+            // Ties go to the target, so a neighbor is only named when it strictly outscores it.
+            let leader = matches.filter { $0.score > 0 }.max { ($0.score, $0.itemID == targetID ? 1 : 0) < ($1.score, $1.itemID == targetID ? 1 : 0) }
             let result = ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID,
                 matchedItemID: confirmed ? targetID : nil, normalizedObservedText: terms, score: score,
-                status: confirmed ? .confirmed : (score > 0 ? .candidate : .noMatch), matchConfidence: confidence)
-            if let reason = trial.observe(at: image.timestamp, suitable: suitable, hasText: hasText,
-                usefulMatch: accepted, policy: routingPolicy), let fallback {
-                transition = RecognitionPathTransition(id: UUID(), timestamp: image.timestamp,
-                    reason: reason, suitableAttempts: trial.suitableAttempts)
-                activeMode = .appleVision
-                confirmation = TemporalConfirmation(requiredObservations: visualPolicy.requiredObservations, maximumGap: visualPolicy.maximumGap)
-                smoother = MatchConfidenceSmoother(window: visualPolicy.requiredObservations, maximumGap: visualPolicy.maximumGap)
-                await extraction.switchToVisual(fallback)
-                guard revision == generation, !stopped else { return update(decision) }
-            }
+                status: confirmed ? .confirmed : (score > 0 ? .candidate : .noMatch), matchConfidence: confidence,
+                leadingItemID: leader?.itemID, leadingScore: leader?.score ?? 0, passesPolicy: accepted)
             // Size advice from the assessor only stands when OCR could not read anything.
             let sizeAdvice = assessment?.quality == .tooSmall || assessment?.quality == .clipped
             let assessorGuidance = sizeAdvice && hasText ? nil : assessment?.guidance
             var guidance = assessorGuidance ?? detection.guidance ??
-                (detection.readiness == .noText && fallback == nil ? .showLabel : nil)
+                (detection.readiness == .noText ? .showLabel : nil)
             if separate {
                 // Steer toward the matched object; before a match, left/right would be a guess.
                 if let focus { guidance = VisionLabelRegionDetector.horizontalGuidance(for: focus) }
@@ -265,7 +271,7 @@ public actor RecognitionCoordinator {
                         progress: String? = nil) -> RecognitionUpdate {
         RecognitionUpdate(gate: gate, observation: observation, result: result, side: side,
             guidance: guidance, modeNotice: source ?? activeMode, awaitingVerdict: awaitingVerdict, insight: insight,
-            activeMode: activeMode, pathTransition: transition, assessment: assessment,
+            activeMode: activeMode, assessment: assessment,
             textReadiness: readiness, didRunOCR: didRunOCR, advanceNotice: advanceNotice, focusedObject: focusedObject,
             progress: progress)
     }
@@ -286,7 +292,7 @@ public actor RecognitionCoordinator {
     private func notingDeadline(_ update: RecognitionUpdate) -> RecognitionUpdate {
         RecognitionUpdate(gate: update.gate, observation: update.observation, result: update.result, side: update.side,
             guidance: update.guidance, modeNotice: update.modeNotice, awaitingVerdict: update.awaitingVerdict,
-            insight: update.insight, activeMode: update.activeMode, pathTransition: update.pathTransition,
+            insight: update.insight, activeMode: update.activeMode,
             assessment: update.assessment, textReadiness: update.textReadiness, didRunOCR: update.didRunOCR,
             advanceNotice: ScanDeadline.expiredMessage, focusedObject: update.focusedObject, progress: update.progress)
     }
@@ -305,13 +311,19 @@ public actor RecognitionCoordinator {
         try VisionRegionOfInterest.validate(pixelCrop: observation.inputRegion, imageSize: image.imageResolution)
         if visualModelVersion != observation.modelVersion { resetEvidence(); visualModelVersion = observation.modelVersion }
         let match = try VisualCatalogMatcher().match(observation, targetID: targetID, against: candidates, policy: visualPolicy)
-        let confirmed = confirmation.observe(targetID: targetID, timestamp: image.timestamp, accepted: match.accepted)
+        let observed = confirmation.observe(targetID: targetID, timestamp: image.timestamp, accepted: match.accepted)
+        // Gemini is only asked after Apple Vision had its time, so a passing answer asks
+        // the shopper at once; their Yes/No is the final check.
+        let confirmed = observed || (match.accepted && observation.kind == .cloudSuggestion)
         let confidence = smoother.add(match.confidence, at: image.timestamp)
         let result = ItemRecognitionResult(timestamp: image.timestamp, targetItemID: targetID,
             matchedItemID: confirmed ? targetID : nil, normalizedObservedText: [], score: match.score,
             status: confirmed ? .confirmed : (match.score >= visualPolicy.minimumScore && match.score > 0 ? .candidate : .noMatch),
-            matchConfidence: confidence, evidenceSource: .visual, visualEvidence: observation, visualMatchReason: match.reason)
-        let value = update(decision, result: result, side: side, guidance: assessment?.guidance,
+            matchConfidence: confidence, evidenceSource: .visual, visualEvidence: observation, visualMatchReason: match.reason,
+            matchedCategory: match.classID, passesPolicy: match.accepted)
+        // As on the OCR path, size advice only stands when the frame did not already show the item.
+        let sizeAdvice = assessment?.quality == .tooSmall || assessment?.quality == .clipped
+        let value = update(decision, result: result, side: side, guidance: sizeAdvice && match.accepted ? nil : assessment?.guidance,
             source: observation.kind == .cloudSuggestion ? .cloudAssist : .appleVision,
             assessment: assessment, awaitingVerdict: confirmed, insight: confirmed ? targetName : match.classID)
         if confirmed { settled = value }

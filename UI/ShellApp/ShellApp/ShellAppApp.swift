@@ -33,7 +33,10 @@ struct ShellAppApp: App {
             }
             // NEW: runs when the app opens and each time you come back to it (e.g. from Settings).
             .onChange(of: scenePhase, initial: true) { _, phase in
-                if phase == .active { model.checkReplayOnboardingSetting() }
+                if phase == .active {
+                    model.checkReplayOnboardingSetting()
+                    model.trials.refreshEnabled()
+                }
             }
         }
         .modelContainer(container)

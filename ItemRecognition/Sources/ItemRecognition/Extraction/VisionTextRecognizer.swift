@@ -5,7 +5,9 @@ import Vision
 /// `VNRecognizeTextRequest` wrapped behind `TextRecognizing`.
 ///
 /// Settings recorded here so they are a stated decision rather than an
-/// unnamed default: recognition level `.accurate`
+/// unnamed default: recognition level `.accurate`, revision `VisionRevisions.text`.
+/// Language correction can respell brand names (Cheez-It), so it is a setting the
+/// baseline tries both ways.
 ///
 /// The request runs on a detached utility task so the calling actor is not
 /// blocked while Vision works. `RecognitionImage.orientation` is passed to
@@ -39,6 +41,7 @@ public struct VisionTextRecognizer: TextRecognizing {
 
         return try await Task.detached(priority: .utility) {
             let request = VNRecognizeTextRequest()
+            request.revision = VisionRevisions.text
             request.recognitionLevel = level
             request.recognitionLanguages = languages
             request.usesLanguageCorrection = correction

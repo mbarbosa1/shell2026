@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Full-screen camera. The mount aims the phone, so the only things on top of the feed
-/// are the small "Still to get" and "In your cart" panels and the X to leave.
+/// are the small "Still to get" and "In your cart" panels and the X to leave, plus, at a stop,
+/// what the camera is looking for and the camera's "Is this …?" while it waits for an answer.
 /// The feed is `AppModel`'s ARKit session, started by "Start shopping".
 struct CameraScreen: View {
     @Environment(AppModel.self) private var model
@@ -16,17 +17,32 @@ struct CameraScreen: View {
             }
 
             VStack(spacing: 8) {
+                if let question = model.scanner.question {
+                    ScanQuestionCard(question: question)
+                }
                 ToGetPanel()
                 CartPanel()
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
-
-            #if DEBUG
-            PickupTestPanel()
-                .frame(maxHeight: .infinity, alignment: .top)
-                .padding(.top, 8)
-            #endif
+        }
+        // Top left, one under the other: what the camera is looking for, then (Debug builds) the
+        // tester bar and the hand-guide test panel.
+        .overlay(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let target = model.scanner.target {
+                    ScanTargetPill(name: target.name, meters: model.scanner.objectMeters)
+                }
+                #if DEBUG
+                if model.trials.isEnabled, model.scanner.target != nil {
+                    TesterBar()
+                }
+                PickupTestPanel()
+                #endif
+            }
+            .padding(.leading, 16)
+            // Clear of the X: its 56 pt button, its 16 pt margin, and a gap.
+            .padding(.trailing, 80)
         }
         .overlay(alignment: .topTrailing) {
             Button { model.endShopping() } label: {
@@ -44,9 +60,89 @@ struct CameraScreen: View {
     }
 }
 
+/// What the camera is looking for at this stop, and how far the object in view is from the phone.
+/// A second check for anyone who can see some of the screen: it's read when VoiceOver lands on
+/// it, but never announced.
+private struct ScanTargetPill: View {
+    let name: String
+    /// Nil with no object in view.
+    let meters: Double?
+
+    /// "1.2"
+    private var figure: String? {
+        meters.map { $0.formatted(.number.precision(.fractionLength(1))) }
+    }
+
+    var body: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Looking for")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                Text(name)
+                    .font(.headline)
+                    .lineLimit(1)
+            }
+            Text(figure.map { "\($0) m" } ?? "—")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(meters == nil ? Theme.textSecondary : Theme.accentText)
+                .contentTransition(.numericText())
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.14))
+        }
+        .animation(.snappy, value: figure)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Looking for \(name)")
+        .accessibilityValue(figure.map { "\($0) meters away" } ?? "No object in view")
+    }
+}
+
 #if DEBUG
-/// Debug-only buttons for testing hand guiding before computer vision is connected. Top left, so
-/// they stay clear of the X.
+/// Tester mode (Debug builds): the trial in progress, and Stop to save it; after that, New trial
+/// looks for the same item again. Shoppers never see it.
+private struct TesterBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let trial = model.trials.current
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(trial.map { "Trial · \($0.setup.kind.rawValue) · asked \($0.asks)" } ?? "No trial running")
+                    .font(.subheadline.weight(.semibold))
+                if let summary = model.trials.lastSummary {
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            if trial != nil {
+                Button("Stop") { model.scanner.stopTrial() }
+            } else {
+                Button("New trial") { model.scanner.restartTarget() }
+            }
+        }
+        .buttonStyle(.bordered)
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(.orange.opacity(0.6))
+        }
+    }
+}
+#endif
+
+#if DEBUG
+/// Debug-only buttons for testing hand guiding before computer vision is connected. In the top-left
+/// column, so they stay clear of the X.
 private struct PickupTestPanel: View {
     @Environment(AppModel.self) private var model
 
@@ -61,9 +157,6 @@ private struct PickupTestPanel: View {
         .buttonStyle(.bordered)
         .padding(8)
         .background(.black.opacity(0.6), in: .rect(cornerRadius: 12))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 16)
-        .padding(.trailing, 88)
     }
 
     private func status(_ pickup: PickupGuide) -> String {
@@ -72,6 +165,35 @@ private struct PickupTestPanel: View {
     }
 }
 #endif
+
+/// The camera found what looks like the item: yes puts it in the cart, no keeps looking.
+/// The question is also spoken, and can be answered by voice.
+private struct ScanQuestionCard: View {
+    @Environment(AppModel.self) private var model
+    let question: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(question)
+                .font(.title3.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                Button("No") { model.answerScan(false) }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityHint("Keeps looking")
+                Button("Yes") { model.answerScan(true) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityHint("Puts it in your cart")
+            }
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(14)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.accentText)
+        }
+    }
+}
 
 /// "In your cart" panel from the Figma camera frame.
 struct CartPanel: View {

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PersonDistanceIOS
 import SwiftData
 import UIKit
 
@@ -62,6 +63,12 @@ final class AppModel {
     /// The one ARKit session: the camera feed, the tracking navigation walks by, and the frames
     /// hand guiding reads.
     let camera: CameraService
+    /// Looks for the list's items with the camera at each stop.
+    let scanner = ItemScanner()
+    /// Baseline trials, in Debug builds with tester mode on (see the Trials screen).
+    let trials = TrialRecorder()
+    /// Camera images for a tester's test scan, which runs without navigation.
+    @ObservationIgnored private var testScanTracker: PositionTracker?
     /// The walk through the store, while one is going (see `NavigationScreen`).
     private(set) var navigator: RouteNavigator?
     var isNavigating: Bool {
@@ -94,6 +101,10 @@ final class AppModel {
         highlightedItemID = currentList.sortedItems.last?.id
         refresh()
         voice = VoiceAgent(model: self)
+        scanner.announce = { [weak self] text, haptic in self?.announce(text, haptic: haptic) }
+        scanner.found = { [weak self] id in self?.putInCart(id) }
+        scanner.depth = ProductDepthEstimator(session: camera.session)
+        scanner.trials = trials
         connectCartDevice()
     }
 
@@ -156,10 +167,52 @@ final class AppModel {
         return notFound
     }
 
-    /// The X on the camera screen: the user leaves before reaching the cashier.
+    /// The X on the camera screen: the user leaves before reaching the cashier (or ends a test scan).
     func endShopping() {
         stopNavigation()
+        endTestScan()
         closeCamera()
+    }
+
+    // MARK: Test scans (tester mode)
+
+    /// Tester mode: scans one list item right away, with detection on from the start, without
+    /// walking to it. Measures recognition only; a Yes records the trial and leaves the list alone.
+    /// Needs a phone: returns why not when it can't start.
+    func startTestScan(_ item: GroceryItem) -> String? {
+        guard trials.isEnabled, !isCameraOpen else { return nil }
+        guard let target = ScanTarget(item: item, products: catalogProducts, landmark: "test-scan",
+                                      windowMeters: ItemScanner.margin) else {
+            return "\(item.name) isn't linked to a catalog product."
+        }
+        isCameraOpen = true
+        Task {
+            guard await camera.start() else {
+                closeCamera()
+                return
+            }
+            // The X was tapped while the camera permission prompt was up.
+            guard isCameraOpen else {
+                camera.stop()
+                return
+            }
+            let tracker = PositionTracker(session: camera.session)
+            tracker.onFrame = { [weak self] buffer, time, focusing in
+                self?.scanner.receive(buffer, at: time, isAdjustingFocus: focusing)
+            }
+            tracker.start()
+            testScanTracker = tracker
+            // Standing at the reference node the whole time, so detection stays on.
+            scanner.begin([target], mode: .testScan) { (0, true) }
+        }
+        return nil
+    }
+
+    private func endTestScan() {
+        guard let tracker = testScanTracker else { return }
+        tracker.stop()
+        testScanTracker = nil
+        scanner.end()
     }
 
     /// The route reached the cashier. Doesn't stop the narrator, so the cashier message is heard.
@@ -186,6 +239,13 @@ final class AppModel {
             announce: { [weak self] text, haptic in self?.announce(text, haptic: haptic) },
             onFinish: { [weak self] in self?.finishShopping() }
         )
+        navigator.onStopChanged = { [weak self, weak navigator] stop in
+            guard let navigator else { return }
+            self?.scan(at: stop, with: navigator)
+        }
+        navigator.onFrame = { [weak self] buffer, time, focusing in
+            self?.scanner.receive(buffer, at: time, isAdjustingFocus: focusing)
+        }
         self.navigator = navigator
         // The phone sits on the cart the whole walk: don't let it lock.
         UIApplication.shared.isIdleTimerDisabled = true
@@ -207,6 +267,50 @@ final class AppModel {
         UIApplication.shared.isIdleTimerDisabled = false
         // The camera stays on while shopping; it only goes off at the cashier or with the X.
         if !isCameraOpen { camera.stop() }
+    }
+
+    // MARK: Item recognition
+
+    /// At a stop the camera looks for its items that are still on the list, from the stop's first
+    /// node (the reference node) to the end of its lane. Only on a real walk: a simulated one has
+    /// no camera images.
+    private func scan(at stop: RoutePlanner.Stop?, with navigator: RouteNavigator) {
+        guard let stop, !navigator.isSimulated else {
+            scanner.end()
+            return
+        }
+        let names = Set(stop.scans.flatMap(\.itemNames))
+        let window = navigator.meters(of: stop) + ItemScanner.margin
+        let targets = items.filter { !$0.isCollected && names.contains($0.name) }.compactMap {
+            ScanTarget(item: $0, products: catalogProducts, landmark: stop.path[0], windowMeters: window)
+        }
+        scanner.begin(targets) { [weak navigator] in
+            (navigator?.metersIntoStop, navigator?.trackingNote == nil)
+        }
+    }
+
+    /// Yes or no to the camera's "Is this Oat milk?". Returns false when nothing was asked.
+    @discardableResult
+    func answerScan(_ yes: Bool) -> Bool {
+        guard scanner.question != nil else { return false }
+        scanner.answer(yes)
+        return true
+    }
+
+    /// What the camera is doing, for the voice agent: "Looking for Oat milk. Move closer to the item."
+    var scanStatus: String {
+        guard let target = scanner.target else {
+            return "The camera isn't looking for anything: the user isn't at an item's spot yet."
+        }
+        if let question = scanner.question { return "The camera asked: \(question) Waiting for a yes or no." }
+        return "Looking for \(target.name)." + (scanner.hint.map { " \($0)." } ?? "")
+    }
+
+    /// The user said yes to the camera's question.
+    private func putInCart(_ id: UUID) {
+        guard let item = items.first(where: { $0.id == id }), !item.isCollected else { return }
+        setCollected(item, true, source: .app)
+        confirmation = "\(item.name) checked off"
     }
 
     /// Plays the cue on the watch and says it: through VoiceOver when it's on, so the two
@@ -254,7 +358,7 @@ final class AppModel {
         context.delete(item)
         log(.removed, removedName, source: source)
         save()
-        navigator?.itemsChanged()
+        itemsToGetChanged()
         confirmation = "\(removedName) removed from your list"
         return true
     }
@@ -514,6 +618,13 @@ final class AppModel {
         item.collectedAt = isCollected ? .now : nil
         log(isCollected ? .checkedOff : .unchecked, item.name, source: source)
         save()
+        itemsToGetChanged()
+    }
+
+    /// The camera stops looking for what's no longer needed, and the navigator moves on from a
+    /// stop once all of its items are in the cart.
+    private func itemsToGetChanged() {
+        scanner.listChanged(remaining: Set(itemsToGet.map(\.id)))
         navigator?.itemsChanged()
     }
 

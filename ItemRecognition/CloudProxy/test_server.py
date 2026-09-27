@@ -88,6 +88,16 @@ class ProxyTests(unittest.TestCase):
         with post("secret") as response:
             self.assertEqual(json.load(response)["label"], "apple")
 
+    def test_healthz_reports_the_configured_model(self):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(self.config, lambda *_: {}))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/healthz"
+        with urllib.request.urlopen(url, timeout=5) as response:
+            body = json.load(response)
+        self.assertEqual(body, {"ok": True, "mock": False, "model": "gemini-test"})
+
 
 if __name__ == "__main__":
     unittest.main()

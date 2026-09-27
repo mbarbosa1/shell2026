@@ -126,7 +126,7 @@ let detector = try CoreMLVisualClassifier(
 let classifier = try ProduceCategoryClassifier(base: detector, cloud: DemoCloudAssist.labeler())
 ```
 
-Detector boxes are collapsed to the best score per label, because the pipeline still assumes one prominent item per crop. Re-tune `VisualRecognitionPolicy.minimumScore` and `CloudAssistPolicy.localScoreBelow` for the new model on the validation split. Detector confidences are not on the same scale as Apple Vision's.
+Detector boxes are collapsed to the best score per label, because the pipeline still assumes one prominent item per crop. Re-tune `VisualRecognitionPolicy.minimumScore` and `minimumMargin` for the new model on the validation split, and check whether `CloudAssistPolicy.appleVisionSeconds` (time on device before Gemini is asked) still suits it. Detector confidences are not on the same scale as Apple Vision's.
 
 ## Acceptance before replacing the Apple Vision baseline
 
