@@ -229,7 +229,10 @@ public actor RecognitionCoordinator {
                 await extraction.switchToVisual(fallback)
                 guard revision == generation, !stopped else { return update(decision) }
             }
-            var guidance = assessment?.guidance ?? detection.guidance ??
+            // Size advice from the assessor only stands when OCR could not read anything.
+            let sizeAdvice = assessment?.quality == .tooSmall || assessment?.quality == .clipped
+            let assessorGuidance = sizeAdvice && hasText ? nil : assessment?.guidance
+            var guidance = assessorGuidance ?? detection.guidance ??
                 (detection.readiness == .noText && fallback == nil ? .showLabel : nil)
             if separate {
                 // Steer toward the matched object; before a match, left/right would be a guess.

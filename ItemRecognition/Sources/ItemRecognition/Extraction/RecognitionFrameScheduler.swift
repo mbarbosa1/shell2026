@@ -203,7 +203,12 @@ actor RecognitionFrameScheduler {
         guard await isCurrent(frame) else { return .discarded }
         let assessment = try await assessor?.assess(frame.image)
         guard await isCurrent(frame), !Task.isCancelled else { return .discarded }
-        if let assessment, !assessment.isSuitable { return .processed(.unsuitable(assessment)) }
+        if let assessment, !assessment.isSuitable {
+            // Size is only a hint for text: a small or close item may still be readable,
+            // so OCR tries it and the coordinator advises only when nothing could be read.
+            let sizeOnly = assessment.objectRegion != nil && (assessment.quality == .tooSmall || assessment.quality == .clipped)
+            guard visualClassifier == nil, sizeOnly else { return .processed(.unsuitable(assessment)) }
+        }
         if let visualClassifier {
             // Appearance classifies the whole crop, so it still needs one item in view.
             if let assessment, assessment.objectBoxes.count > 1 {
