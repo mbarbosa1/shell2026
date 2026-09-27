@@ -13,7 +13,7 @@ struct ShopView: View {
                 DeviceStatusRow(isConnected: model.isDeviceConnected)
                     .padding(.top, 6)
 
-                ListeningHeader(isListening: model.isListening)
+                ListeningHeader(isListening: model.isListening, hasStarted: model.isVoiceConnected)
                     .padding(.top, 16)
 
                 if let voiceError = model.voiceError {
@@ -80,11 +80,10 @@ struct ShopView: View {
         .foregroundStyle(Theme.textPrimary)
     }
 
-    /// Voice only connects once the user turns listening on, so the first tap starts it.
+    /// Starting connects to Mira; stopping ends the conversation so she goes quiet right away.
     private var listeningButtonTitle: String {
         if model.isConnectingVoice { return "Connecting…" }
-        if model.isListening { return "Pause listening" }
-        return model.isVoiceConnected ? "Resume listening" : "Start listening"
+        return model.isListening ? "Stop listening" : "Start listening"
     }
 }
 
@@ -106,18 +105,24 @@ struct DeviceStatusRow: View {
 
 struct ListeningHeader: View {
     let isListening: Bool
+    /// False until the user first turns listening on, so the header invites them to start.
+    var hasStarted = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label {
-                Text(isListening ? "I’m listening" : "Listening paused")
+                Text(isListening ? "I’m listening" : hasStarted ? "Listening paused" : "Mira is ready")
                     .font(.title2.weight(.medium))
             } icon: {
-                Image(systemName: isListening ? "waveform" : "mic.slash")
+                Image(systemName: isListening ? "waveform" : hasStarted ? "mic.slash" : "mic")
                     .foregroundStyle(isListening ? Theme.accentText : Theme.textSecondary)
                     .symbolEffect(.variableColor.iterative, isActive: isListening)
             }
-            Text(isListening ? "Say “open camera” to scan an item." : "Resume listening when you’re ready.")
+            Text(
+                isListening ? "Say “open camera” to scan an item."
+                    : hasStarted ? "Resume listening when you’re ready."
+                    : "Tap Start listening to make a list or start a trip."
+            )
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
         }
