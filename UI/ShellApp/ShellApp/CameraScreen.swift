@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Full-screen camera. The mount aims the phone, so the only things on top of the feed
-/// are the small "Still to get" and "In your cart" panels and the X to leave.
+/// are the small "Still to get" and "In your cart" panels and the X to leave, plus the
+/// camera's "Is this …?" while it waits for an answer.
 /// The feed is `AppModel`'s ARKit session, started by "Start shopping".
 struct CameraScreen: View {
     @Environment(AppModel.self) private var model
@@ -16,6 +17,9 @@ struct CameraScreen: View {
             }
 
             VStack(spacing: 8) {
+                if let question = model.scanner.question {
+                    ScanQuestionCard(question: question)
+                }
                 ToGetPanel()
                 CartPanel()
             }
@@ -35,6 +39,35 @@ struct CameraScreen: View {
             .accessibilityHint("Stops shopping directions and closes the camera")
         }
         .accessibilityAction(.escape) { model.endShopping() }
+    }
+}
+
+/// The camera found what looks like the item: yes puts it in the cart, no keeps looking.
+/// The question is also spoken, and can be answered by voice.
+private struct ScanQuestionCard: View {
+    @Environment(AppModel.self) private var model
+    let question: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(question)
+                .font(.title3.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                Button("No") { model.answerScan(false) }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityHint("Keeps looking")
+                Button("Yes") { model.answerScan(true) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityHint("Puts it in your cart")
+            }
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .padding(14)
+        .background(Theme.background.opacity(0.94), in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.accentText)
+        }
     }
 }
 

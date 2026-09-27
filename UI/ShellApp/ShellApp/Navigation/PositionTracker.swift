@@ -10,12 +10,18 @@ final class PositionTracker: NSObject {
     var onPosition: ((SIMD2<Double>) -> Void)?
     /// Nil while tracking is good; otherwise why it isn't.
     var onStatus: ((String?) -> Void)?
+    /// The camera image, for item recognition. Whoever takes it must let go of it quickly and
+    /// hold at most one at a time: ARKit has a small pool of these and stalls when it runs out.
+    var onFrame: ((CVPixelBuffer, TimeInterval) -> Void)?
 
     /// Positions are passed on this often. Walking covers about 15 cm in that time.
     private static let interval: TimeInterval = 0.1
+    /// Camera images are passed on at most this often (30 a second; ARKit runs at 60).
+    private static let frameInterval: TimeInterval = 1.0 / 30
 
     private let session: ARSession
     private var lastSample: TimeInterval = 0
+    private var lastFrame: TimeInterval = 0
     private var status: String?
 
     /// `session` is `AppModel`'s; running and pausing it is up to `CameraService`.
@@ -46,7 +52,12 @@ extension PositionTracker: ARSessionDelegate {
         let state = frame.camera.trackingState
         let column = frame.camera.transform.columns.3
         let position = SIMD2(Double(column.x), Double(-column.z))
+        let image = frame.capturedImage
         MainActor.assumeIsolated {
+            if let onFrame, time - lastFrame >= Self.frameInterval {
+                lastFrame = time
+                onFrame(image, time)
+            }
             switch state {
             case .normal:
                 report(nil)
