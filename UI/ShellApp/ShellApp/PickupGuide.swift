@@ -100,7 +100,7 @@ final class PickupGuide {
         sweep = Task {
             for _ in 0..<sweepPasses {
                 for pose in poses {
-                    arm.move(to: pose, why: "sweep")
+                    arm.move(to: pose)
                     try? await Task.sleep(for: sweepDwell)
                     if Task.isCancelled { return }
                 }

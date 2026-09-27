@@ -26,8 +26,8 @@ struct CameraScreen: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        // Top left, one under the other: what the camera is looking for, then (Debug builds) the
-        // tester bar and the hand-guide test panel.
+        // Top left, one under the other: what the camera is looking for, then (Debug builds, tester
+        // mode) the tester bar.
         .overlay(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 8) {
                 if let target = model.scanner.target {
@@ -37,7 +37,6 @@ struct CameraScreen: View {
                 if model.trials.isEnabled, model.scanner.target != nil {
                     TesterBar()
                 }
-                PickupTestPanel()
                 #endif
             }
             .padding(.leading, 16)
@@ -136,60 +135,6 @@ private struct TesterBar: View {
         .overlay {
             RoundedRectangle(cornerRadius: 22).strokeBorder(.orange.opacity(0.6))
         }
-    }
-}
-#endif
-
-#if DEBUG
-/// Debug-only buttons for testing the arm and hand guiding. In the top-left column, so they stay
-/// clear of the X.
-private struct PickupTestPanel: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let pickup = model.pickup
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Button("Arm left") { model.testFace(.left) }
-                Button("Ahead") { model.testFace(.ahead) }
-                Button("Arm right") { model.testFace(.right) }
-                Text(model.isDeviceConnected ? "Cart connected" : "No cart")
-                    .font(.caption.monospaced())
-            }
-            HStack {
-                Button("−5°") { model.arm.nudgePan(by: -5) }
-                Button("+5°") { model.arm.nudgePan(by: 5) }
-                Text("pan \(model.arm.pose.pan) · tilt \(model.arm.pose.tilt)")
-                    .font(.caption.monospaced())
-            }
-            HStack {
-                Button("Tilt up") { model.arm.nudgeTilt(by: 10) }
-                Button("Level") { model.arm.level() }
-                Button("Tilt down") { model.arm.nudgeTilt(by: -10) }
-            }
-            // What each servo was last told, newest first.
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(model.arm.recentMoves.enumerated()), id: \.offset) { _, move in
-                    Text(move)
-                }
-            }
-            .font(.caption2.monospaced())
-            .foregroundStyle(.white)
-            HStack {
-                Button("Test hand guide") { pickup.testHandGuide() }
-                Button("Stop") { pickup.stop() }
-                Text(status(pickup))
-                    .font(.caption.monospaced())
-            }
-        }
-        .buttonStyle(.bordered)
-        .padding(8)
-        .background(.black.opacity(0.6), in: .rect(cornerRadius: 12))
-    }
-
-    private func status(_ pickup: PickupGuide) -> String {
-        let advice = pickup.advice.map { "\($0)" } ?? "–"
-        return "\(pickup.phase) · \(advice)"
     }
 }
 #endif

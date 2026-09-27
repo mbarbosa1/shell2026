@@ -84,7 +84,7 @@ final class AppModel {
     @ObservationIgnored private let cartDevice: CartBluetooth
     @ObservationIgnored private var obstacleDetector = ObstacleDetector()
     /// Turns the phone on the cart: to each item's shelf at a stop, and back ahead after it.
-    @ObservationIgnored let arm: ArmController
+    @ObservationIgnored private let arm: ArmController
     /// Which shelf each list item at the current stop is on, by item id (from the map's `Visit.side`).
     @ObservationIgnored private var scanSides: [UUID: StoreMap.Side] = [:]
     /// Finds the product on the shelf with the arm and guides the user's hand to it, using the
@@ -314,15 +314,6 @@ final class AppModel {
             (navigator?.metersIntoStop, navigator?.trackingNote == nil)
         }
     }
-
-    #if DEBUG
-    /// Debug panel on the camera screen: turns the arm by hand, to check it moves the right way
-    /// and, with a test scan running, that items are found with the phone turned.
-    func testFace(_ side: StoreMap.Side) {
-        scanner.facing = side
-        arm.face(side)
-    }
-    #endif
 
     /// Turns the phone to the shelf of the item being looked for, or straight ahead when there's
     /// none. An item whose side the map doesn't know is looked for straight ahead too.

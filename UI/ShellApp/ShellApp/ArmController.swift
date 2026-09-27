@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import Observation
 
 /// Points the phone by sending angles to the 3 servos on the cart (see `firmware/src/main.cpp`):
 /// - **pan** (GPIO 4) turns the phone left and right.
@@ -12,7 +11,6 @@ import Observation
 /// 20–160° limits. The firmware also smooths each move (`MAX_STEP`), so even a big jump
 /// turns the phone gradually instead of jerking it.
 @MainActor
-@Observable
 final class ArmController {
     /// Where the phone points. `tilt` is tilt2's angle; tilt1 follows it (see `tiltMirrored`).
     struct Pose: Equatable {
@@ -60,20 +58,16 @@ final class ArmController {
     /// The most one step may turn. Small steps are slower but keep the stand steady.
     static let maxStepDegrees = 3.0
 
-    @ObservationIgnored private let cart: CartBluetooth
+    private let cart: CartBluetooth
     /// The last pose sent.
     private(set) var pose = home
-    /// The latest moves, newest first, for the debug panel: why, and the angles each servo was
-    /// sent.
-    private(set) var recentMoves: [String] = []
 
     init(cart: CartBluetooth) {
         self.cart = cart
     }
 
-    /// Sends a pose, clamped to the safe ranges, with both tilt servos set from `tilt`. `why` is
-    /// shown in the debug panel's list of moves.
-    func move(to target: Pose, why: String = "move") {
+    /// Sends a pose, clamped to the safe ranges, with both tilt servos set from `tilt`.
+    func move(to target: Pose) {
         let safe = Pose(
             pan: min(max(target.pan, Self.panRange.lowerBound), Self.panRange.upperBound),
             tilt: min(max(target.tilt, Self.tiltRange.lowerBound), Self.tiltRange.upperBound)
@@ -81,38 +75,16 @@ final class ArmController {
         pose = safe
         let tilt1 = Self.tiltMirrored ? 180 - safe.tilt : safe.tilt
         cart.sendArm(pan: UInt8(safe.pan), tilt1: UInt8(tilt1), tilt2: UInt8(safe.tilt))
-
-        let limited = safe != target ? " (limited)" : ""
-        recentMoves.insert("\(why): pan \(safe.pan) · tilt1 \(tilt1) · tilt2 \(safe.tilt)\(limited)", at: 0)
-        if recentMoves.count > 5 { recentMoves.removeLast() }
     }
 
     func moveHome() {
-        move(to: Self.home, why: "home")
+        move(to: Self.home)
     }
 
     /// Turns the phone to a shelf, level, for scanning it while the cart moves. Nil (no side on
     /// the map) faces straight ahead.
     func face(_ side: StoreMap.Side?) {
-        let side = side ?? .ahead
-        move(to: Pose(pan: Self.pan(facing: side), tilt: Self.home.tilt), why: "face \(side.rawValue)")
-    }
-
-    /// Debug panel: turns a few degrees from wherever the arm is, to find the pan angle that
-    /// faces straight ahead (`panAhead`).
-    func nudgePan(by degrees: Int) {
-        move(to: Pose(pan: pose.pan + degrees, tilt: pose.tilt), why: "nudge")
-    }
-
-    /// Debug panel: tilts a few degrees from wherever the arm is. Both tilt servos move, as always.
-    /// A higher tilt angle is meant to be up; if the panel's "Tilt up" tilts down, that's reversed.
-    func nudgeTilt(by degrees: Int) {
-        move(to: Pose(pan: pose.pan, tilt: pose.tilt + degrees), why: "tilt")
-    }
-
-    /// Debug panel: back to level without turning.
-    func level() {
-        move(to: Pose(pan: pose.pan, tilt: Self.home.tilt), why: "level")
+        move(to: Pose(pan: Self.pan(facing: side ?? .ahead), tilt: Self.home.tilt))
     }
 
     /// Where to look while searching one side's shelf: three pan angles across the shelf,
@@ -139,7 +111,7 @@ final class ArmController {
         next.pan += Int(panStep.rounded(.awayFromZero))
         next.tilt += Int(tiltStep.rounded(.awayFromZero))
         let before = pose
-        move(to: next, why: "center")
+        move(to: next)
         return pose != before
     }
 
